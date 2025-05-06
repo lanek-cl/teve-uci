@@ -74,7 +74,10 @@ class PIDController:
 
         return output
 
-
+def map_range(array, new_min, new_max):
+    old_min = np.min(array)
+    old_max = np.max(array)
+    return (array - old_min) / (old_max - old_min) * (new_max - new_min) + new_min
 
 
 def main():
@@ -83,6 +86,7 @@ def main():
     try:
         with st.sidebar:
             st.write("Parámetros de simulación")
+            timespan = st.number_input("Tiempo de referencia", 10, 100, 20, 10)
             setpoint = st.number_input("Saturación deseada", 80, 100, 95, 1)
             initial_saturation = st.number_input("Saturación inicial", 80, 100, 90, 1)
             simulation_time = st.number_input("Tiempo de simulación", 5, 300, 100, 1)
@@ -101,16 +105,25 @@ def main():
         current_saturation = initial_saturation
         valve_opening = 0
         time = np.arange(0, simulation_time, time_step)
+        time2 = np.arange(0, timespan, time_step)
+        sat = map_range(time2, initial_saturation, setpoint)
         saturation_values = []
         valve_opening_values = []
 
         with st.spinner("Simulando...", show_time=True):
+            cont = 0
             for t in time:
-                error = setpoint - current_saturation
+                if t in time2:
+                    error = sat[cont] - current_saturation
+                    cont = cont+1
+                    #st.write(sat[cont], current_saturation)
+                else:
+                    error = setpoint - current_saturation
                 valve_opening = pid.control(error, time_step)
                 current_saturation = plant_model(current_saturation, valve_opening, nl, pl)
                 saturation_values.append(current_saturation)
                 valve_opening_values.append(valve_opening)
+
 
         # Plot Oxygen Saturation
         fig1 = go.Figure()
