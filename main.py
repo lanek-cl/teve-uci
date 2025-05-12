@@ -93,13 +93,13 @@ def main():
             time_step = st.number_input("Paso de simulación", 0.0, 10.0, 1.0, 0.1)
 
             st.write("Parámetros del controlador")
-            kp = st.number_input("KP", 0.0, 100.0, 2.4, 0.1)
-            ki = st.number_input("KI", 0.0, 20.0, 1.2, 0.1)
-            kd = st.number_input("KD", 0.0, 1.0, 0.1, 0.01)
+            kp = st.number_input("KP", 0.0, 10.0, 2.0, 0.1)
+            ki = st.number_input("KI", 0.0, 10.0, 0.5, 0.1)
+            kd = st.number_input("KD", 0.0, 10.0, 0.0, 0.01)
 
             st.write("Parámetros de la planta")
             pl = st.number_input("Absorción proporcional de oxígeno", 0.0, 1.0, 0.5, 0.01)
-            nl = st.number_input("Pérdida natural de oxígeno", 0.0, 1.0, 0.05, 0.01)
+            nl = st.number_input("Pérdida natural de oxígeno", 0.0, 1.0, 0.1, 0.01)
 
         pid = PIDController(kp, ki, kd)
         current_saturation = initial_saturation
