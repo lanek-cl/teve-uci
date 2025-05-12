@@ -135,7 +135,7 @@ def main():
             x=time, y=saturation_values, mode='lines', name='Oxygen Saturation (%)', line=dict(color='blue')
         ))
         fig1.add_trace(go.Scatter(
-            x=time, y=sat3, name='Setpoint (%)', line=dict(color='red', dash='dash')
+            x=time, y=sat3, name='Reference (%)', line=dict(color='red', dash='dash')
         ))
         #fig1.add_hline(y=setpoint, line=dict(color='red', dash='dash'), name="Setpoint")
         #fig1.add_trace(go.Scatter(
@@ -151,10 +151,10 @@ def main():
         # Plot Valve Opening
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
-            x=time, y=valve_opening_values, mode='lines', name='Valve Opening (%)', line=dict(color='green')
+            x=time, y=valve_opening_values, mode='lines', name='Actuation (%)', line=dict(color='green')
         ))
         fig2.update_layout(
-            title="Valve Opening",
+            title="Actuation",
             xaxis_title="Time (s)",
             yaxis_title="Valve Opening (0-1)",
             legend=dict(x=0, y=1),
