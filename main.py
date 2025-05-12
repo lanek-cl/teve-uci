@@ -110,6 +110,8 @@ def main():
         saturation_values = []
         valve_opening_values = []
 
+        errors = []
+
         with st.spinner("Simulando...", show_time=True):
             cont = 0
             for t in time:
@@ -123,14 +125,22 @@ def main():
                 current_saturation = plant_model(current_saturation, valve_opening, nl, pl)
                 saturation_values.append(current_saturation)
                 valve_opening_values.append(valve_opening)
-
+                errors.append(error)
 
         # Plot Oxygen Saturation
+        sat2 = [sat[-1]]*((len(time)-len(time2))+1)
+        sat3 = sat.tolist()[1:]+sat2
         fig1 = go.Figure()
         fig1.add_trace(go.Scatter(
             x=time, y=saturation_values, mode='lines', name='Oxygen Saturation (%)', line=dict(color='blue')
         ))
-        fig1.add_hline(y=setpoint, line=dict(color='red', dash='dash'), name="Setpoint")
+        fig1.add_trace(go.Scatter(
+            x=time, y=sat3, name='Setpoint (%)', line=dict(color='red', dash='dash')
+        ))
+        #fig1.add_hline(y=setpoint, line=dict(color='red', dash='dash'), name="Setpoint")
+        #fig1.add_trace(go.Scatter(
+        #    x=time, y=sat3, mode='dash', name='Setpoint (%)', line=dict(color='red')
+        #))
         fig1.update_layout(
             title="Oxygen Saturation Control",
             xaxis_title="Time (s)",
@@ -150,9 +160,22 @@ def main():
             legend=dict(x=0, y=1),
         )
 
+        # Plot Valve Opening
+        fig3 = go.Figure()
+        fig3.add_trace(go.Scatter(
+            x=time, y=errors, mode='lines', name='Error [-]', line=dict(color='purple')
+        ))
+        fig3.update_layout(
+            title="Error",
+            xaxis_title="Time (s)",
+            yaxis_title="Error [Flow]",
+            legend=dict(x=0, y=1),
+        )
+
         # Render Plots
         st.plotly_chart(fig1, use_container_width=True)
         st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig3, use_container_width=True)
     except:
         st.error("Error en simulación")
 
