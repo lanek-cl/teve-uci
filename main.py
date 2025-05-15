@@ -79,6 +79,49 @@ def map_range(array, new_min, new_max):
     old_max = np.max(array)
     return (array - old_min) / (old_max - old_min) * (new_max - new_min) + new_min
 
+def divide_list(lst):
+    # Calculate the size of each part
+    n = len(lst)
+    part_size = n // 3
+    remainder = n % 3  # For distributing extra elements evenly
+
+    # Create the parts
+    parts = []
+    start = 0
+    for i in range(3):
+        extra = 1 if i < remainder else 0  # Add an extra element to some parts if there's a remainder
+        end = start + part_size + extra
+        parts.append(lst[start:end])
+        start = end
+
+    return parts
+
+def create_ramp(time2, initial_saturation, setpoint):
+    middle = initial_saturation + (setpoint - initial_saturation)/2
+    parts = divide_list(time2)
+    sat0 = map_range(parts[0], initial_saturation, middle)
+    sat1 = map_range(parts[1], middle, middle)
+    sat2 = map_range(parts[2], middle, setpoint)
+    sat = sat0.tolist()[:-1] + sat1.tolist() + sat2.tolist()[1:] + [setpoint]*2
+    return sat
+
+def create_step(time2, initial_saturation, setpoint):
+    middle = initial_saturation + (setpoint - initial_saturation)/2
+    parts = divide_list(time2)
+    sat0 = map_range(parts[0], initial_saturation, initial_saturation)
+    sat1 = map_range(parts[1], middle, middle)
+    sat2 = map_range(parts[2], setpoint, setpoint)
+    sat = sat0.tolist()[:-1] + sat1.tolist() + sat2.tolist()[1:] + [setpoint]*2
+    return sat
+
+def create_mixed(time2, initial_saturation, setpoint):
+    middle = initial_saturation + (setpoint - initial_saturation)/2
+    parts = divide_list(time2)
+    sat0 = map_range(parts[0], initial_saturation, initial_saturation)
+    sat1 = map_range(parts[1], middle, middle)
+    sat2 = map_range(parts[2], middle, setpoint)
+    sat = sat0.tolist()[:-1] + sat1.tolist() + sat2.tolist()[1:] + [setpoint]*2
+    return sat
 
 def main():
     clear_page('Simulador')
@@ -86,7 +129,8 @@ def main():
     try:
         with st.sidebar:
             st.write("Parámetros de simulación")
-            timespan = st.number_input("Tiempo de referencia", 10, 100, 20, 10)
+            waveform = st.selectbox("Forma de referencia", ["Straight", "Ramps", "Steps", "Mixed"])
+            timespan = st.number_input("Tiempo de referencia", 10, 100, 60, 10)
             setpoint = st.number_input("Saturación deseada", 80, 100, 95, 1)
             initial_saturation = st.number_input("Saturación inicial", 80, 100, 90, 1)
             simulation_time = st.number_input("Tiempo de simulación", 5, 300, 100, 1)
@@ -106,7 +150,14 @@ def main():
         valve_opening = 0
         time = np.arange(0, simulation_time, time_step)
         time2 = np.arange(0, timespan, time_step)
-        sat = map_range(time2, initial_saturation, setpoint)
+        if waveform == "Ramps":
+            sat = create_ramp(time2, initial_saturation, setpoint)
+        elif waveform == "Steps":
+            sat = create_step(time2, initial_saturation, setpoint)
+        elif waveform == "Mixed":
+            sat = create_mixed(time2, initial_saturation, setpoint)
+        else:
+            sat = [setpoint]*len(time2)
         saturation_values = []
         valve_opening_values = []
 
@@ -118,7 +169,6 @@ def main():
                 if t in time2:
                     error = sat[cont] - current_saturation
                     cont = cont+1
-                    #st.write(sat[cont], current_saturation)
                 else:
                     error = setpoint - current_saturation
                 valve_opening = pid.control(error, time_step)
@@ -128,8 +178,12 @@ def main():
                 errors.append(error)
 
         # Plot Oxygen Saturation
-        sat2 = [sat[-1]]*((len(time)-len(time2))+1)
-        sat3 = sat.tolist()[1:]+sat2
+        if waveform == "Ramps":
+            sat2 = [setpoint]*((len(time)-len(time2))+1)
+            sat3 = sat[1:]+sat2
+        else:
+            sat2 = [setpoint]*((len(time)-len(time2)))
+            sat3 = sat+sat2
         fig1 = go.Figure()
         fig1.add_trace(go.Scatter(
             x=time, y=saturation_values, mode='lines', name='Oxygen Saturation (%)', line=dict(color='blue')
