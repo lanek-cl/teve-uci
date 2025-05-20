@@ -44,7 +44,7 @@ def plant_model(current_saturation, valve_opening, natural_oxygen_loss=0.1, prop
     new_saturation = current_saturation + saturation_change
     return max(0, min(max_saturation, new_saturation))
 
-def plant_model_new(current_saturation, valve_opening, time_step=0.1, natural_oxygen_loss_rate=1.0, proportional_absorption_rate=5.0):
+def plant_model_new(current_saturation, valve_opening, natural_oxygen_loss_rate=1.0, proportional_absorption_rate=5.0, time_step=0.1):
     max_saturation = 100
     natural_oxygen_loss = natural_oxygen_loss_rate * time_step/0.1
     proportional_absorption = proportional_absorption_rate * time_step/0.1
@@ -377,7 +377,7 @@ def main():
                 else:
                     error = setpoint - current_saturation
                 valve_opening = pid.control(error, time_step)
-                current_saturation = plant_model_new(current_saturation, valve_opening, time_step, nl, pl)
+                current_saturation = plant_model_new(current_saturation, valve_opening, nl, pl, time_step)
                 saturation_values.append(current_saturation)
                 valve_opening_values.append(valve_opening)
                 errors.append(error)
