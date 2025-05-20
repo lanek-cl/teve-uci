@@ -19,12 +19,12 @@ def resolve_path(path):
     return resolved_path
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.argv = [
-        'streamlit',
-        'run',
-        resolve_path('main.py'),
-        '--global.developmentMode=false',
-        '--server.port=8501'
+        "streamlit",
+        "run",
+        resolve_path("main.py"),
+        "--global.developmentMode=false",
+        "--server.port=8501",
     ]
     sys.exit(stcli.main())
