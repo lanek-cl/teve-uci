@@ -281,14 +281,12 @@ def create_sigmoid(time, time2, initial_saturation, setpoint, transition_width=1
         transition_start = max(0, len(sigmoid_wave) - transition_width)
 
         for i in range(transition_width):
-            weight = 0.5 * (
-                1 - np.cos(np.pi * i / transition_width)
-            )  # i / transition_width
+            weight = 0.5 * (1 - np.cos(np.pi * i / transition_width)) #i / transition_width
             blend_index = transition_start + i
             if blend_index < len(sigmoid_wave):
-                sigmoid_wave[blend_index] = (1 - weight) * sigmoid_wave[
-                    blend_index
-                ] + weight * setpoint
+                sigmoid_wave[blend_index] = (
+                    (1 - weight) * sigmoid_wave[blend_index] + weight * setpoint
+                )
 
     # Combine the smoothed sigmoid and the constant part
     return sigmoid_wave.tolist() + constant_part
@@ -381,13 +379,7 @@ def main():
             )
 
             initial_saturation = st.number_input("Saturación inicial", 80, 100, 90, 1)
-            setpoint = st.number_input(
-                "Saturación final",
-                initial_saturation,
-                100,
-                min(initial_saturation + 5, 100),
-                1,
-            )
+            setpoint = st.number_input("Saturación final", initial_saturation, 100, min(initial_saturation+5, 100), 1)
             time_step = st.number_input("Paso de simulación", 0.0, 1.0, 0.1, 0.1)
 
             st.write("Parámetros del controlador")
@@ -424,9 +416,7 @@ def main():
         valve_opening = 0
         time = np.arange(0, simulation_time, time_step)
         time2 = np.arange(0, timespan, time_step)
-        reference = create_wave(
-            time, time2, initial_saturation, setpoint, waveform, freq
-        )
+        reference = create_wave(time, time2, initial_saturation, setpoint, waveform, freq)
         current_saturation = reference[0]
 
         saturation_values = []
@@ -445,6 +435,8 @@ def main():
                 valve_opening_values.append(valve_opening)
                 errors.append(error)
                 cont = cont + 1
+
+
 
         # Plot Oxygen Saturation
         fig1 = go.Figure()
@@ -496,9 +488,10 @@ def main():
         )
 
         errors2 = []
-        stop = len(reference) - 1
+        stop = len(reference)-1
         for i in range(stop):
-            errors2.append(reference[i + 1] - saturation_values[i])
+            errors2.append(reference[i+1]-saturation_values[i])
+
 
         # Plot Valve Opening
         fig3 = go.Figure()
@@ -521,6 +514,7 @@ def main():
         #         line=dict(color="blue"),
         #     )
         # )
+
 
         fig3.update_layout(
             title="Error",
