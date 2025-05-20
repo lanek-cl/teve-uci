@@ -338,11 +338,12 @@ def main():
             if waveform in paramWaves:
                 freq = st.number_input("Cantidad de repeticiones", 1, 10, freq, 1)
 
-            timespan = st.number_input("Tiempo de referencia", 10, 100, 60, 10)
+            timespan = st.number_input("Tiempo de referencia", 10, 300, 200, 10)
+            simulation_time = st.number_input("Tiempo de simulación", 5, 500, 300, 1)
             setpoint = st.number_input("Saturación deseada", 80, 100, 95, 1)
             initial_saturation = st.number_input("Saturación inicial", 80, 100, 90, 1)
-            simulation_time = st.number_input("Tiempo de simulación", 5, 300, 100, 1)
-            time_step = st.number_input("Paso de simulación", 0.0, 10.0, 0.1, 0.1)
+
+            time_step = 0.1 #st.number_input("Paso de simulación", 0.0, 10.0, 0.1, 0.1)
 
             st.write("Parámetros del controlador")
             kp = st.number_input("KP", 0.0, 10.0, 2.0, 0.1)
