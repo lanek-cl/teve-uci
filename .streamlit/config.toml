@@ -1,19 +1,4 @@
-[server]
-maxUploadSize = 1024
-maxMessageSize = 1024
-port = 8503
-
-
 [theme]
 base = "light"
 font = "monospace"
-primaryColor="#964bff"
-
-
-[logger]
-level = "info"
-messageFormat = "%(asctime)s %(message)s"
-
-[browser]
-gatherUsageStats = false
-serverPort = 8503
+primaryColor = "#964bff"
