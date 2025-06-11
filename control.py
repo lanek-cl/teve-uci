@@ -19,6 +19,7 @@ import time
 import pandas as pd
 import os
 from datetime import datetime
+import json
 
 
 def clear_page(title="Lanek"):
@@ -124,6 +125,16 @@ def plot(placeholder1, placeholder2, placeholder3):
     fig3.update_layout(title="Error", xaxis_title="Tiempo (s)", yaxis_title="Error")
     placeholder3.plotly_chart(fig3, use_container_width=True)
 
+
+def load_config():
+    with open("config.json", "r") as f:
+        return json.load(f)
+    return {}  # fallback handled dynamically
+
+def save_config(config):
+    with open("config.json", "w") as f:
+        json.dump(config, f, indent=4)
+
 def main():
     clear_page("Teve-UCI")
     st.sidebar.markdown("# Controlador PID")
@@ -145,34 +156,56 @@ def main():
         st.session_state.errors = []
     if "reference" not in st.session_state:
         st.session_state.reference = []
+    if "running" not in st.session_state:
+        st.session_state.running = False
     with st.sidebar:
         st.write("Parámetros de simulación")
-        setpoint = st.number_input("Saturación final", 90, 100, 100, 1)
-        time_step = st.number_input("Paso de simulación", 0.0, 1.0, 0.1, 0.1)
-        simulation_time = st.number_input("Tiempo de simulación", 5, 500, 30, 1)
+        config = load_config()
+        setpoint_cfg = config["setpoint"]
+        setpoint = st.number_input(
+            setpoint_cfg["label"],
+            setpoint_cfg["min"],
+            setpoint_cfg["max"],
+            setpoint_cfg["default"],
+            setpoint_cfg["step"]
+        )
 
-        if "running" not in st.session_state:
-            st.session_state.running = False
+        time_step_cfg = config["time_step"]
+        time_step = st.number_input(
+            time_step_cfg["label"],
+            time_step_cfg["min"],
+            time_step_cfg["max"],
+            time_step_cfg["default"],
+            time_step_cfg["step"]
+        )
+
+        simulation_time_cfg = config["simulation_time"]
+        simulation_time = st.number_input(
+            simulation_time_cfg["label"],
+            simulation_time_cfg["min"],
+            simulation_time_cfg["max"],
+            simulation_time_cfg["default"],
+            simulation_time_cfg["step"]
+        )
+
+       
 
         st.write("Parámetros del controlador")
+        
+        controller_cfg = config["controller_type"]
         controllerType = st.selectbox(
-            "Tipo de controlador", ["PID", "PI", "PD", "P"]
+            controller_cfg["label"],
+            controller_cfg["options"],
+            index=controller_cfg["options"].index(controller_cfg["default"])
         )
-        kp = (
-            st.number_input("KP", 0.0, 4.0, 2.0, 0.1)
-            if "P" in controllerType
-            else 0
-        )
-        ki = (
-            st.number_input("KI", 0.0, 10.0, 0.5, 0.1)
-            if "I" in controllerType
-            else 0
-        )
-        kd = (
-            st.number_input("KD", 0.0, 0.1, 0.01, 0.01)
-            if "D" in controllerType
-            else 0
-        )
+
+        kp_cfg = config["kp"]
+        ki_cfg = config["ki"]
+        kd_cfg = config["kd"]
+
+        kp = st.number_input(kp_cfg["label"], kp_cfg["min"], kp_cfg["max"], kp_cfg["default"], kp_cfg["step"]) if "P" in controllerType else 0
+        ki = st.number_input(ki_cfg["label"], ki_cfg["min"], ki_cfg["max"], ki_cfg["default"], ki_cfg["step"]) if "I" in controllerType else 0
+        kd = st.number_input(kd_cfg["label"], kd_cfg["min"], kd_cfg["max"], kd_cfg["default"], kd_cfg["step"]) if "D" in controllerType else 0
         if not st.session_state.running:
             if st.button("START", type="primary"):
                 st.session_state.running = True
@@ -182,11 +215,15 @@ def main():
                 st.session_state.valve_opening_values = []
                 st.session_state.errors = []
                 st.session_state.reference = []       
-                st.session_state.config = {
-                    "setpoint": setpoint,
-                    "time_step": time_step,
-                    "simulation_time": simulation_time,
-                }
+                config["setpoint"]["default"] = setpoint
+                config["time_step"]["default"] = time_step
+                config["simulation_time"]["default"] = simulation_time
+                config["controller_type"]["default"] = controllerType
+                config["kp"]["default"] = kp
+                config["ki"]["default"] = ki
+                config["kd"]["default"] = kd
+
+                save_config(config)
                 st.rerun()
         else:
             if st.button("STOP", type="secondary"):
