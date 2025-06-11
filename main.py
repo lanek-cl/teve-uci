@@ -423,18 +423,18 @@ def main():
         valve_opening_values = []
         errors = []
 
-        with st.spinner("Simulando...", show_time=True):
-            cont = 0
-            for t in time:
-                error = reference[cont] - current_saturation
-                valve_opening = pid.control(error, time_step)
-                current_saturation = plant_model(
-                    current_saturation, valve_opening, nl, pl, time_step
-                )
-                saturation_values.append(current_saturation)
-                valve_opening_values.append(valve_opening)
-                errors.append(error)
-                cont = cont + 1
+        #with st.spinner("Simulando...", show_time=True):
+        cont = 0
+        for t in time:
+            error = reference[cont] - current_saturation
+            valve_opening = pid.control(error, time_step)
+            current_saturation = plant_model(
+                current_saturation, valve_opening, nl, pl, time_step
+            )
+            saturation_values.append(current_saturation)
+            valve_opening_values.append(valve_opening)
+            errors.append(error)
+            cont = cont + 1
 
 
 
