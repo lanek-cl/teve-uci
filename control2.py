@@ -72,8 +72,8 @@ def export_data_to_csv():
 
 def plot():
     fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.saturation_values, name="Saturación", line=dict(color="blue")))
     fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.reference, name="Referencia", line=dict(color="red", dash="dash")))
+    fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.saturation_values, name="Saturación", line=dict(color="blue")))
     fig1.update_layout(title="Saturación de Oxígeno", xaxis_title="Tiempo (s)", yaxis_title="SpO₂ (%)")
     st.session_state.placeholder1.plotly_chart(fig1, use_container_width=True)
 
@@ -95,16 +95,24 @@ def load_config():
 
 def save_config():
     config = load_config()
-    config.update({
-        "setpoint": {"default": st.session_state.setpoint},
-        "time_step": {"default": st.session_state.time_step},
-        "simulation_time": {"default": st.session_state.simulation_time},
-        "controller_type": {"default": st.session_state.controllerType},
-        "kp": {"default": st.session_state.kp},
-        "ki": {"default": st.session_state.ki},
-        "kd": {"default": st.session_state.kd},
-        "port": {"default": st.session_state.portNumber},
-    })
+
+    updates = {
+        "setpoint": st.session_state.setpoint,
+        "time_step": st.session_state.time_step,
+        "simulation_time": st.session_state.simulation_time,
+        "controller_type": st.session_state.controllerType,
+        "kp": st.session_state.kp,
+        "ki": st.session_state.ki,
+        "kd": st.session_state.kd,
+        "port": st.session_state.portNumber,
+    }
+
+    for key, value in updates.items():
+        if key in config and isinstance(config[key], dict):
+            config[key]["default"] = value
+        else:
+            config[key] = {"default": value}  # fallback in case structure doesn't exist
+
     with open("config.json", "w") as f:
         json.dump(config, f, indent=4)
 
@@ -147,14 +155,17 @@ def set_session():
         "reference": [],
         "running": False,
         "setpoint": 95.0,
-        "placeholder1": st.empty(),
-        "placeholder2": st.empty(),
-        "placeholder3": st.empty()
+        
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
-
+    st.session_state.placeholder1 = st.empty()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.session_state.placeholder2 = st.empty()
+    with col2:
+        st.session_state.placeholder3 = st.empty()
 
 def run_controller():
     pid = PIDController(st.session_state.kp, st.session_state.ki, st.session_state.kd, st.session_state.time_step)
@@ -232,7 +243,7 @@ def main():
 
         if not st.session_state.running:
             if st.button("START", type="primary"):
-                #save_config()
+                save_config()
                 start()
         else:
             if st.button("STOP", type="secondary"):
