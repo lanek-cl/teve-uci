@@ -29,6 +29,8 @@ def collect_data(device, csvFileName):
         writer = csv.writer(file)
         writer.writerow(['Count', 'PPG', 'HR', 'SPO2'])
 
+    
+
     delay_start(3)
     start_time = time.time()
 
@@ -66,10 +68,8 @@ def collect_data(device, csvFileName):
 
 if __name__ == '__main__':
     # Parameters
-    #VENDOR_ID = 0x28E9
-    #PRODUCT_ID = 0x028A
-    VENDOR_ID = 0x28e9
-    PRODUCT_ID = 0x028a 
+    VENDOR_ID = 0x28E9
+    PRODUCT_ID = 0x028A
     SYNC = 0x80
     PULSE = 0x40
     csvPath = 'csv/'
@@ -78,6 +78,7 @@ if __name__ == '__main__':
 
     device = hid.device()
     device.open(VENDOR_ID, PRODUCT_ID)
+    #device.set_nonblocking(1)
     print("Opening the device")
 
     collect_data(device, csvFileName)
