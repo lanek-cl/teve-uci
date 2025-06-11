@@ -8,18 +8,17 @@
 @contact : lucas.cortes@lanek.cl.
 """
 
-import math
-import numpy as np
-import matplotlib.pyplot as plt
+
 import streamlit as st
 import plotly.graph_objects as go
-import random
 import polars as pl
 import time
 import pandas as pd
 import os
 from datetime import datetime
 import json
+import serial
+import serial.tools.list_ports
 
 
 def clear_page(title="Lanek"):
@@ -131,21 +130,53 @@ def load_config():
         return json.load(f)
     return {}  # fallback handled dynamically
 
-def save_config(config):
+def save_config(setpoint, time_step, simulation_time, controllerType, kp, ki, kd, portNumber):
+    config = load_config()
+    config["setpoint"]["default"] = setpoint
+    config["time_step"]["default"] = time_step
+    config["simulation_time"]["default"] = simulation_time
+    config["controller_type"]["default"] = controllerType
+    config["kp"]["default"] = kp
+    config["ki"]["default"] = ki
+    config["kd"]["default"] = kd
+    config["port"]["default"] = portNumber
     with open("config.json", "w") as f:
         json.dump(config, f, indent=4)
 
-def main():
-    clear_page("Teve-UCI")
-    st.sidebar.markdown("# Controlador PID")
-    placeholder1 = st.empty()
-    col1, col2 = st.columns(2)
-    with col1:
-        placeholder2 = st.empty()
-    with col2:
-        placeholder3 = st.empty()
+def set_open(value):
+    arduino = st.session_state.get("arduino", None)
+    if not arduino or not arduino.is_open:
+        st.warning("Arduino is not connected or open.")
+        return
+    if 0 <= value <= 255:
+        command = f"{value}\n"
+        arduino.write(command.encode('utf-8'))
+        #time.sleep(0.05)
+        #st.write(f"Sent open: {value}")
 
 
+def start():
+    st.session_state.running = True
+    st.session_state.start_time = time.time()
+    st.session_state.timestamps = []
+    st.session_state.saturation_values = []
+    st.session_state.valve_opening_values = []
+    st.session_state.errors = []
+    st.session_state.reference = []  
+    st.session_state.disabled = True
+    st.rerun()
+
+def stop():
+    st.session_state.disabled = False
+    st.session_state.running = False
+    export_data_to_csv()
+    set_open(0)
+    st.rerun()
+
+
+def set_session():
+    if "disabled" not in st.session_state:
+        st.session_state.disabled = False
     if "timestamps" not in st.session_state:
         st.session_state.timestamps = []
     if "saturation_values" not in st.session_state:
@@ -158,110 +189,128 @@ def main():
         st.session_state.reference = []
     if "running" not in st.session_state:
         st.session_state.running = False
+    if "setpoint" not in st.session_state:
+        st.session_state.setpoint = False
+    
+
+def run_controller(setpoint, kp, ki, kd, time_step, simulation_time, placeholder1, placeholder2, placeholder3):
+    pid = PIDController(kp, ki, kd, time_step)
+    valve_opening = 0
+    current_saturation = get_sat()
+    error = setpoint - current_saturation
+    start_time = time.time()
+
+    while time.time() - start_time <= simulation_time:
+        time.sleep(time_step)
+        now = time.time() - start_time
+        st.session_state.timestamps.append(now)
+        error = setpoint - current_saturation
+        valve_opening = pid.control(error, time_step)
+        serial_opening = int(valve_opening*255)
+        set_open(serial_opening)
+        current_saturation = get_sat()
+        st.session_state.saturation_values.append(current_saturation)
+        st.session_state.valve_opening_values.append(valve_opening)
+        st.session_state.errors.append(error)
+        st.session_state.reference = [setpoint] * len(st.session_state.timestamps)
+        plot(placeholder1, placeholder2, placeholder3)
+
+
+def get_params():
+    st.write("Parámetros de simulación")
+    config = load_config()
+    setpoint_cfg = config["setpoint"]
+    setpoint = st.number_input(
+        setpoint_cfg["label"],
+        setpoint_cfg["min"],
+        setpoint_cfg["max"],
+        setpoint_cfg["default"],
+        setpoint_cfg["step"],
+        disabled=st.session_state.disabled
+    )
+
+    time_step_cfg = config["time_step"]
+    time_step = st.number_input(
+        time_step_cfg["label"],
+        time_step_cfg["min"],
+        time_step_cfg["max"],
+        time_step_cfg["default"],
+        time_step_cfg["step"],
+        disabled=st.session_state.disabled
+    )
+
+    simulation_time_cfg = config["simulation_time"]
+    simulation_time = st.number_input(
+        simulation_time_cfg["label"],
+        simulation_time_cfg["min"],
+        simulation_time_cfg["max"],
+        simulation_time_cfg["default"],
+        simulation_time_cfg["step"],
+        disabled=st.session_state.disabled
+    )
+
+
+    st.write("Parámetros del controlador")
+    
+    controller_cfg = config["controller_type"]
+    controllerType = st.selectbox(
+        controller_cfg["label"],
+        controller_cfg["options"],
+        index=controller_cfg["options"].index(controller_cfg["default"]),
+        disabled=st.session_state.disabled
+    )
+
+    kp_cfg = config["kp"]
+    ki_cfg = config["ki"]
+    kd_cfg = config["kd"]
+    kp = st.number_input(kp_cfg["label"], kp_cfg["min"], kp_cfg["max"], kp_cfg["default"], kp_cfg["step"],
+        disabled=st.session_state.disabled) if "P" in controllerType else 0
+    ki = st.number_input(ki_cfg["label"], ki_cfg["min"], ki_cfg["max"], ki_cfg["default"], ki_cfg["step"],
+        disabled=st.session_state.disabled) if "I" in controllerType else 0
+    kd = st.number_input(kd_cfg["label"], kd_cfg["min"], kd_cfg["max"], kd_cfg["default"], kd_cfg["step"],
+        disabled=st.session_state.disabled) if "D" in controllerType else 0
+
+    port_cfg = config["port"]
+    ports = serial.tools.list_ports.comports()
+    portsD = []
+    for port in ports:
+        portsD.append(port.device)
+    portNumber = st.selectbox(
+        port_cfg["label"],
+        portsD,
+        index=portsD.index(portsD[-1]),
+        disabled=st.session_state.disabled
+    )
+
+    return setpoint, time_step, simulation_time, controllerType, kp, ki, kd, portNumber
+
+
+def main():
+    clear_page("Teve-UCI")
+    set_session()
+    st.sidebar.markdown("# Controlador PID")
+    placeholder1 = st.empty()
+    col1, col2 = st.columns(2)
+    with col1:
+        placeholder2 = st.empty()
+    with col2:
+        placeholder3 = st.empty()
     with st.sidebar:
-        st.write("Parámetros de simulación")
-        config = load_config()
-        setpoint_cfg = config["setpoint"]
-        setpoint = st.number_input(
-            setpoint_cfg["label"],
-            setpoint_cfg["min"],
-            setpoint_cfg["max"],
-            setpoint_cfg["default"],
-            setpoint_cfg["step"]
-        )
-
-        time_step_cfg = config["time_step"]
-        time_step = st.number_input(
-            time_step_cfg["label"],
-            time_step_cfg["min"],
-            time_step_cfg["max"],
-            time_step_cfg["default"],
-            time_step_cfg["step"]
-        )
-
-        simulation_time_cfg = config["simulation_time"]
-        simulation_time = st.number_input(
-            simulation_time_cfg["label"],
-            simulation_time_cfg["min"],
-            simulation_time_cfg["max"],
-            simulation_time_cfg["default"],
-            simulation_time_cfg["step"]
-        )
-
-       
-
-        st.write("Parámetros del controlador")
-        
-        controller_cfg = config["controller_type"]
-        controllerType = st.selectbox(
-            controller_cfg["label"],
-            controller_cfg["options"],
-            index=controller_cfg["options"].index(controller_cfg["default"])
-        )
-
-        kp_cfg = config["kp"]
-        ki_cfg = config["ki"]
-        kd_cfg = config["kd"]
-
-        kp = st.number_input(kp_cfg["label"], kp_cfg["min"], kp_cfg["max"], kp_cfg["default"], kp_cfg["step"]) if "P" in controllerType else 0
-        ki = st.number_input(ki_cfg["label"], ki_cfg["min"], ki_cfg["max"], ki_cfg["default"], ki_cfg["step"]) if "I" in controllerType else 0
-        kd = st.number_input(kd_cfg["label"], kd_cfg["min"], kd_cfg["max"], kd_cfg["default"], kd_cfg["step"]) if "D" in controllerType else 0
+        setpoint, time_step, simulation_time, controllerType, kp, ki, kd, portNumber = get_params()
+        if "arduino" not in st.session_state:
+            st.session_state.arduino = serial.Serial(portNumber, 9600, timeout=1)
         if not st.session_state.running:
             if st.button("START", type="primary"):
-                st.session_state.running = True
-                st.session_state.start_time = time.time()
-                st.session_state.timestamps = []
-                st.session_state.saturation_values = []
-                st.session_state.valve_opening_values = []
-                st.session_state.errors = []
-                st.session_state.reference = []       
-                config["setpoint"]["default"] = setpoint
-                config["time_step"]["default"] = time_step
-                config["simulation_time"]["default"] = simulation_time
-                config["controller_type"]["default"] = controllerType
-                config["kp"]["default"] = kp
-                config["ki"]["default"] = ki
-                config["kd"]["default"] = kd
-
-                save_config(config)
-                st.rerun()
+                save_config(setpoint, time_step, simulation_time, controllerType, kp, ki, kd, portNumber)
+                start()
         else:
             if st.button("STOP", type="secondary"):
-                st.session_state.running = False
-                export_data_to_csv()
-                st.rerun()
+                stop()
 
 
     if st.session_state.running:
-        try:
-            pid = PIDController(kp, ki, kd, time_step)
-            valve_opening = 0
-            current_saturation = get_sat()
-            error = setpoint - current_saturation
-            
-
-            start_time = time.time()
-
-            while time.time() - start_time <= simulation_time:
-                time.sleep(time_step)
-                now = time.time() - start_time
-                st.session_state.timestamps.append(now)
-
-                error = setpoint - current_saturation
-                valve_opening = pid.control(error, time_step)
-                current_saturation = get_sat()
-
-                st.session_state.saturation_values.append(current_saturation)
-                st.session_state.valve_opening_values.append(valve_opening)
-                st.session_state.errors.append(error)
-
-                # Reference line (same length as time)
-                st.session_state.reference = [setpoint] * len(st.session_state.timestamps)
-                plot(placeholder1, placeholder2, placeholder3)
-            export_data_to_csv()
-
-        except:
-            st.error("Error en simulación")
+        run_controller(setpoint, kp, ki, kd, time_step, simulation_time, placeholder1, placeholder2, placeholder3)
+        stop()
 
     else:
         plot(placeholder1, placeholder2, placeholder3)

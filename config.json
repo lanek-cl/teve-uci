@@ -50,5 +50,9 @@
         "max": 0.1,
         "default": 0.01,
         "step": 0.01
+    },
+    "port": {
+        "label": "Puerto Serial",
+        "default": "COM3"
     }
 }
