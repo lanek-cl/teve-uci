@@ -56,7 +56,7 @@ def collect_data(device, VENDOR_ID, PRODUCT_ID, csvFileName):
 
                 with open(csvFileName, 'a', newline='') as file:
                     writer = csv.writer(file)
-                    writer.writerow([data_count, PPG_bit, HR_bit, SPO2_bit, formatted_time])
+                    writer.writerow([data_count, PPG_bit, HR_bit, SPO2_bit, str(formatted_time)+str(i)])
                     #print("HR_BPM:", HR_bit, "- SpO2:", SPO2_bit)
                 data_count += 1
 

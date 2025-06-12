@@ -19,6 +19,7 @@ import json
 import serial
 import serial.tools.list_ports
 import csv
+import numpy as np
 
 def clear_page(title="Lanek"):
     st.set_page_config(page_title=title, layout="wide")
@@ -86,7 +87,8 @@ def get_sat():
     hr = float(row_dict["HR"])
     ppg = float(row_dict["PPG"])
     ts = row_dict["TimeStamp"]
-    return min(spo2, 100), ts, hr, ppg
+    count = float(row_dict["Count"])
+    return min(spo2, 100), ts, hr, ppg, count
 
 
 def export_data_to_csv():
@@ -216,13 +218,13 @@ def set_session():
 def run_controller():
     pid = PIDController(st.session_state.kp, st.session_state.ki, st.session_state.kd, st.session_state.time_step)
     start_time = time.time()
-    MAX_LOST = 3
+    MAX_LOST = 10
     LOST = 0
     while time.time() - start_time <= st.session_state.simulation_time:
         time.sleep(st.session_state.time_step)
         #now = time.time() - start_time
-        current_saturation, current_timestamp, hr, ppg = get_sat()
-        if current_timestamp != st.session_state.lastTS:
+        current_saturation, current_timestamp, hr, ppg, count = get_sat()
+        if count != st.session_state.lastTS:
             error = st.session_state.setpoint - current_saturation
             valve_opening = pid.control(error, st.session_state.time_step)
             set_open(int(valve_opening * 255))
@@ -233,10 +235,20 @@ def run_controller():
             st.session_state.valve_opening_values.append(valve_opening)
             st.session_state.errors.append(error)
             st.session_state.reference = [st.session_state.setpoint] * len(st.session_state.timestamps)
-            st.session_state.lastTS = current_timestamp
+            st.session_state.lastTS = count
             st.session_state.placeholder0.empty()
             LOST = 0
         else:
+            current_time = time.time()
+            formatted_time = datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            st.session_state.timestamps.append(formatted_time)
+            st.session_state.saturation_values.append(np.nan)
+            st.session_state.hr_values.append(np.nan)
+            st.session_state.ppg_values.append(np.nan)
+            st.session_state.valve_opening_values.append(np.nan)
+            st.session_state.errors.append(np.nan)
+            st.session_state.reference = [st.session_state.setpoint] * len(st.session_state.timestamps)
+
             LOST += 1
             if LOST > MAX_LOST:
                 st.session_state.placeholder0.error("Data stream stopped, check device.")

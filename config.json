@@ -10,7 +10,7 @@
         "label": "Paso de simulacion",
         "min": 0.0,
         "max": 1.0,
-        "default": 0.1,
+        "default": 0.25,
         "step": 0.1
     },
     "simulation_time": {
