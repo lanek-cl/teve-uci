@@ -58,13 +58,16 @@ def read_last_row(file_path):
         last_line = f.readline().decode()
     return last_line.strip()
 
-def get_sat_old():
+def get_sat():
     df = pl.read_csv("csv/Output1.csv")
     spo2 = df[-1, "SPO2"]
     ts = df[-1, "TimeStamp"]
-    return min(spo2, 100), ts
+    hr = df[-1, "HR"]
+    ppg = df[-1, "PPG"]
+    count = df[-1, "Count"]
+    return min(spo2, 100), ts, hr, ppg, count
 
-def get_sat():
+def get_sat_old():
     with open("csv/Output1.csv", "rb") as f:
         f.seek(-2, 2)  # Move to second last byte
         while f.read(1) != b'\n':

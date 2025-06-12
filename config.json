@@ -53,6 +53,6 @@
     },
     "port": {
         "label": "Puerto Serial",
-        "default": "COM3"
+        "default": "COM4"
     }
 }
