@@ -4,46 +4,34 @@
 @brief   : Runs main controller simulation
 @date    : 2025/04/29
 @version : 1.0.0
-@author  : Lucas Cortés.
-@contact : lucas.cortes@lanek.cl.
+@author  : Lucas Cortés
+@contact : lucas.cortes@lanek.cl
 """
-
 
 import streamlit as st
 import plotly.graph_objects as go
 import polars as pl
-import time
 import pandas as pd
+import time
 import os
 from datetime import datetime
 import json
 import serial
 import serial.tools.list_ports
+import csv
+import numpy as np
+import io
+import threading
+from multiprocessing import Process, Event
+import hid
+#from cms50 import data_collection_loop
 
-
+RAW_DATA = 'csv/raw_data.csv'
+VENDOR_ID = 0x28E9
+PRODUCT_ID = 0x028A
+   
 def clear_page(title="Lanek"):
-    try:
-        # im = Image.open('assets/logos/favicon.png')
-        st.set_page_config(
-            page_title=title,
-            # page_icon=im,
-            layout="wide",
-        )
-        hide_streamlit_style = """
-            <style>
-                .reportview-container {
-                    margin-top: -2em;
-                }
-                #MainMenu {visibility: hidden;}
-                .stDeployButton {display:none;}
-                footer {visibility: hidden;}
-                #stDecoration {display:none;}
-            </style>
-        """
-        #st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-    except Exception:
-        pass
-
+    st.set_page_config(page_title=title, layout="wide")
 
 
 class PIDController:
@@ -57,263 +45,439 @@ class PIDController:
         self.output_max = output_max
 
     def control(self, error, dt):
-        if dt <= 0:
-            raise ValueError("dt must be greater than 0")
-
         proportional = self.kp * error
         self.integral += error * dt
-        integral = self.ki * self.integral
         derivative = self.kd * (error - self.previous_error) / dt
 
-        output = proportional + integral + derivative
-        if output > self.output_max:
-            output = self.output_max
-            self.integral -= error * dt
-        elif output < self.output_min:
-            output = self.output_min
-            self.integral -= error * dt
+        output = proportional + self.ki * self.integral + derivative
+        output = max(self.output_min, min(output, self.output_max))
+
+        if output == self.output_max or output == self.output_min:
+            self.integral -= error * dt  # anti-windup
 
         self.previous_error = error
-
         return output
 
+def get_sat_old():
+    df = pl.read_csv(RAW_DATA)
+    spo2 = df[-1, "SPO2"]
+    ts = df[-1, "TimeStamp"]
+    hr = df[-1, "HR"]
+    ppg = df[-1, "PPG"]
+    count = df[-1, "Count"]
+    return min(spo2, 100), ts, hr, ppg, count
 
 def get_sat():
-    df = pl.read_csv("csv/Output1.csv")
-    last_row = df[-1]
-    spo2 = last_row["SPO2"][0]
-    spo2 = spo2 if spo2 <= 100 else 100
-    return spo2
+    with open(RAW_DATA, "rb") as f:
+        f.seek(-2, 2)  # Move to second last byte
+        while f.read(1) != b'\n':
+            f.seek(-2, 1)
+        last_line = f.readline().decode().strip()
+
+    # Re-read the header to map column names
+    with open(RAW_DATA, "r", newline='') as f:
+        header = next(f).strip().split(",")
+
+    # Skip if last_line is empty or malformed
+    if not last_line or len(last_line.split(",")) != len(header):
+        raise ValueError("Last line is empty or malformed")
+
+    # Build a dictionary manually (avoiding DictReader on single line)
+    values = last_line.split(",")
+    row_dict = dict(zip(header, values))
+
+    spo2 = float(row_dict["SPO2"])
+    hr = float(row_dict["HR"])
+    ppg = float(row_dict["PPG"])
+    ts = row_dict["TimeStamp"]
+    count = float(row_dict["Count"])
+    return min(spo2, 100), ts, hr, ppg, count
+
+
+def get_sat_new():
+    with open(RAW_DATA, "rb") as f:
+        try:
+            f.seek(-500, 2)  # Go to near the end of the file (500 bytes before EOF)
+        except OSError:
+            f.seek(0)  # File is smaller than 500 bytes
+        lines = f.readlines()
+        last_line = lines[-1].decode()
+    
+    # Now parse the line manually or with Polars
+    df = pl.read_csv(io.StringIO(last_line), has_header=False, new_columns=["TimeStamp", "SPO2", "HR", "PPG", "Count"])
+    spo2 = df[0, "SPO2"]
+    ts = df[0, "TimeStamp"]
+    hr = df[0, "HR"]
+    ppg = df[0, "PPG"]
+    count = df[0, "Count"]
+    return min(spo2, 100), ts, hr, ppg, count
 
 def export_data_to_csv():
     df = pd.DataFrame({
-        "timestamp": st.session_state.timestamps,
         "saturation": st.session_state.saturation_values,
         "reference": st.session_state.reference,
         "valve_opening": st.session_state.valve_opening_values,
         "error": st.session_state.errors,
+        "timestamp": st.session_state.timestamps,
     })
-    #return df.to_csv(index=False).encode("utf-8")
-    # Create folder if it doesn't exist
-    output_dir = "output_data"
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Use timestamp in filename
-    filename = datetime.now().strftime("simulacion_pid_%Y%m%d_%H%M%S.csv")
-    filepath = os.path.join(output_dir, filename)
-
+    df.reset_index(inplace=True)
+    df.rename(columns={"index": "Count"}, inplace=True)
+    os.makedirs("csv", exist_ok=True)
+    timenow = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename1 = f"control_data_{timenow}.csv"
+    filename2 = f"raw_data_{timenow}.csv"
+    filepath = os.path.join("csv", filename1)
     df.to_csv(filepath, index=False)
+    os.rename(RAW_DATA, f"csv/{filename2}")
     return filepath
 
-def plot(placeholder1, placeholder2, placeholder3):
+
+def plot():
+    satPC = []
+    for i in st.session_state.valve_opening_values:
+        satPC.append(i*100)
+
     fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.saturation_values, mode="lines", name="Saturación", line=dict(color="blue")))
-    fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.reference, mode="lines", name="Referencia", line=dict(color="red", dash="dash")))
+    fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.reference, name="Referencia", line=dict(color="red", dash="dash")))
+    fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.saturation_values, name="Saturación", line=dict(color="blue")))
     fig1.update_layout(title="Saturación de Oxígeno", xaxis_title="Tiempo (s)", yaxis_title="SpO₂ (%)")
-    placeholder1.plotly_chart(fig1, use_container_width=True)
+    st.session_state.placeholder1.plotly_chart(fig1, use_container_width=True)
 
-    # Plot 2: Valve opening
     fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.valve_opening_values, mode="lines", name="Apertura válvula", line=dict(color="green")))
-    fig2.update_layout(title="Actuación", xaxis_title="Tiempo (s)", yaxis_title="Apertura [0–1]")
-    placeholder2.plotly_chart(fig2, use_container_width=True)
+    fig2.add_trace(go.Scatter(x=st.session_state.timestamps, y=satPC, name="Apertura válvula", line=dict(color="green")))
+    fig2.update_layout(title="Apertura", xaxis_title="Tiempo (s)", yaxis_title="Apertura (%)")
+    st.session_state.placeholder2.plotly_chart(fig2, use_container_width=True)
 
-    # Plot 3: Error
     fig3 = go.Figure()
-    fig3.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.errors, mode="lines", name="Error", line=dict(color="purple")))
-    fig3.update_layout(title="Error", xaxis_title="Tiempo (s)", yaxis_title="Error")
-    placeholder3.plotly_chart(fig3, use_container_width=True)
+    fig3.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.errors, name="Error", line=dict(color="purple")))
+    fig3.update_layout(title="Error", xaxis_title="Tiempo (s)", yaxis_title="Error (%)")
+    st.session_state.placeholder3.plotly_chart(fig3, use_container_width=True)
+
+    fig4 = go.Figure()
+    fig4.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.hr_values, name="HR", line=dict(color="blue")))
+    fig4.update_layout(title="HR", xaxis_title="Tiempo (s)", yaxis_title="HR (BPM)")
+    st.session_state.placeholder4.plotly_chart(fig4, use_container_width=True)
+
+    fig5 = go.Figure()
+    fig5.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.ppg_values, name="PPG", line=dict(color="blue")))
+    fig5.update_layout(title="PPG", xaxis_title="Tiempo (s)", yaxis_title="PPG")
+    st.session_state.placeholder5.plotly_chart(fig5, use_container_width=True)
 
 
 def load_config():
     with open("config.json", "r") as f:
         return json.load(f)
-    return {}  # fallback handled dynamically
 
-def save_config(setpoint, time_step, simulation_time, controllerType, kp, ki, kd, portNumber):
+
+def save_config():
     config = load_config()
-    config["setpoint"]["default"] = setpoint
-    config["time_step"]["default"] = time_step
-    config["simulation_time"]["default"] = simulation_time
-    config["controller_type"]["default"] = controllerType
-    config["kp"]["default"] = kp
-    config["ki"]["default"] = ki
-    config["kd"]["default"] = kd
-    config["port"]["default"] = portNumber
+
+    updates = {
+        "setpoint": st.session_state.setpoint,
+        "time_step": st.session_state.time_step,
+        "simulation_time": st.session_state.simulation_time,
+        "controller_type": st.session_state.controllerType,
+        "kp": st.session_state.kp,
+        "ki": st.session_state.ki,
+        "kd": st.session_state.kd,
+        "port": st.session_state.portNumber,
+    }
+
+    for key, value in updates.items():
+        if key in config and isinstance(config[key], dict):
+            config[key]["default"] = value
+        else:
+            config[key] = {"default": value}  # fallback in case structure doesn't exist
+
     with open("config.json", "w") as f:
         json.dump(config, f, indent=4)
 
+
 def set_open(value):
     arduino = st.session_state.get("arduino", None)
-    if not arduino or not arduino.is_open:
-        st.warning("Arduino is not connected or open.")
-        return
-    if 0 <= value <= 255:
-        command = f"{value}\n"
-        arduino.write(command.encode('utf-8'))
-        #time.sleep(0.05)
-        #st.write(f"Sent open: {value}")
+    if arduino and arduino.is_open and 0 <= value <= 255:
+        arduino.write(f"{value}\n".encode("utf-8"))
 
 
 def start():
-    st.session_state.running = True
-    st.session_state.start_time = time.time()
-    st.session_state.timestamps = []
-    st.session_state.saturation_values = []
-    st.session_state.valve_opening_values = []
-    st.session_state.errors = []
-    st.session_state.reference = []  
-    st.session_state.disabled = True
+    if st.session_state.data_collection_process is not None:
+        st.warning("Collection already running.")
+        return
+
+    # Reset stop signal
+    st.session_state.stop_data_event.clear()
+
+    # Create and start process
+    process = Process(
+        target=data_collection_loop,
+        args=(st.session_state.stop_data_event, VENDOR_ID, PRODUCT_ID, RAW_DATA)
+    )
+    process.start()
+    st.session_state.data_collection_process = process
+
+    time.sleep(2)
+
+    st.session_state.update({
+        "running": True,
+        "start_time": time.time(),
+        "timestamps": [],
+        "saturation_values": [],
+        "hr_values": [],
+        "ppg_values": [],
+        "valve_opening_values": [],
+        "errors": [],
+        "reference": [],
+        "disabled": True
+    })
     st.rerun()
 
+
 def stop():
-    st.session_state.disabled = False
-    st.session_state.running = False
-    export_data_to_csv()
+    event = st.session_state.stop_data_event
+    process = st.session_state.data_collection_process
+
+    if process is None:
+        st.warning("No process running.")
+        return
+
+    event.set()
+    process.join(timeout=5)
+    if process.is_alive():
+        st.warning("Force killing process...")
+        process.terminate()
+        process.join()
+    st.session_state.data_collection_process = None
+
+    st.session_state["running"] = False
+    st.session_state["disabled"] = False
     set_open(0)
+    export_data_to_csv()
     st.rerun()
 
 
 def set_session():
-    if "disabled" not in st.session_state:
-        st.session_state.disabled = False
-    if "timestamps" not in st.session_state:
-        st.session_state.timestamps = []
-    if "saturation_values" not in st.session_state:
-        st.session_state.saturation_values = []
-    if "valve_opening_values" not in st.session_state:
-        st.session_state.valve_opening_values = []
-    if "errors" not in st.session_state:
-        st.session_state.errors = []
-    if "reference" not in st.session_state:
-        st.session_state.reference = []
-    if "running" not in st.session_state:
-        st.session_state.running = False
-    if "setpoint" not in st.session_state:
-        st.session_state.setpoint = False
-    
+    defaults = {
+        "disabled": False,
+        "timestamps": [],
+        "saturation_values": [],
+        "hr_values": [],
+        "ppg_values": [],
+        "valve_opening_values": [],
+        "errors": [],
+        "reference": [],
+        "running": False,
+        "setpoint": 95.0,
+        "lastTS": None,
+        
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+    st.session_state.placeholder0 = st.empty()
+    st.session_state.placeholder1 = st.empty()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.session_state.placeholder4 = st.empty()
+        st.session_state.placeholder2 = st.empty()
+    with col2:
+        st.session_state.placeholder5 = st.empty()
+        st.session_state.placeholder3 = st.empty()
 
-def run_controller(setpoint, kp, ki, kd, time_step, simulation_time, placeholder1, placeholder2, placeholder3):
-    pid = PIDController(kp, ki, kd, time_step)
-    valve_opening = 0
-    current_saturation = get_sat()
-    error = setpoint - current_saturation
+    if "data_collection_process" not in st.session_state:
+        st.session_state.data_collection_process = None
+    if "stop_data_event" not in st.session_state:
+        st.session_state.stop_data_event = Event()
+
+def run_controller():
+    pid = PIDController(st.session_state.kp, st.session_state.ki, st.session_state.kd, st.session_state.time_step)
     start_time = time.time()
+    MAX_LOST = 10
+    LOST = 0
+    while time.time() - start_time <= st.session_state.simulation_time:
+        time.sleep(st.session_state.time_step)
 
-    while time.time() - start_time <= simulation_time:
-        time.sleep(time_step)
-        now = time.time() - start_time
-        st.session_state.timestamps.append(now)
-        error = setpoint - current_saturation
-        valve_opening = pid.control(error, time_step)
-        serial_opening = int(valve_opening*255)
-        set_open(serial_opening)
-        current_saturation = get_sat()
-        st.session_state.saturation_values.append(current_saturation)
-        st.session_state.valve_opening_values.append(valve_opening)
-        st.session_state.errors.append(error)
-        st.session_state.reference = [setpoint] * len(st.session_state.timestamps)
-        plot(placeholder1, placeholder2, placeholder3)
+        # Retry logic for stale data
+        attempts = 3
+        for _ in range(attempts):
+            current_saturation, current_timestamp, hr, ppg, count = get_sat()
+            if count != st.session_state.lastTS:
+                break
+            time.sleep(0.005)
+
+        if count != st.session_state.lastTS:
+            error = st.session_state.setpoint - current_saturation
+            valve_opening = pid.control(error, st.session_state.time_step)
+            set_open(int(valve_opening * 255))
+
+            # Append real data
+            st.session_state.timestamps.append(current_timestamp)
+            st.session_state.saturation_values.append(current_saturation)
+            st.session_state.hr_values.append(hr)
+            st.session_state.ppg_values.append(ppg)
+            st.session_state.valve_opening_values.append(valve_opening)
+            st.session_state.errors.append(error)
+            st.session_state.lastTS = count
+            LOST = 0
+        else:
+            # Append NaNs if data is stale
+            current_time = time.time()
+            formatted_time = datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
+            st.session_state.timestamps.append(formatted_time)
+            st.session_state.saturation_values.append(np.nan)
+            st.session_state.hr_values.append(np.nan)
+            st.session_state.ppg_values.append(np.nan)
+            st.session_state.valve_opening_values.append(np.nan)
+            st.session_state.errors.append(np.nan)
+            LOST += 1
+
+        # Reference updated in both branches
+        st.session_state.reference = [st.session_state.setpoint] * len(st.session_state.timestamps)
+
+        # Status handling
+        if LOST > MAX_LOST:
+            st.session_state.placeholder0.error("Data stream stopped, check device.")
+        else:
+            st.session_state.placeholder0.empty()
+
+        plot()
 
 
 def get_params():
     st.write("Parámetros de simulación")
     config = load_config()
-    setpoint_cfg = config["setpoint"]
-    setpoint = st.number_input(
-        setpoint_cfg["label"],
-        setpoint_cfg["min"],
-        setpoint_cfg["max"],
-        setpoint_cfg["default"],
-        setpoint_cfg["step"],
+
+    def get_input(cfg, typ="number"):
+        return st.number_input(
+            cfg["label"], cfg["min"], cfg["max"], cfg["default"], cfg["step"],
+            disabled=st.session_state.disabled
+        ) if typ == "number" else st.selectbox(
+            cfg["label"], cfg["options"], index=cfg["options"].index(cfg["default"]),
+            disabled=st.session_state.disabled
+        )
+
+    st.session_state.setpoint = get_input(config["setpoint"])
+    st.session_state.time_step = get_input(config["time_step"])
+    st.session_state.simulation_time = get_input(config["simulation_time"])
+    st.session_state.controllerType = get_input(config["controller_type"], "select")
+
+    if "P" in st.session_state.controllerType:
+        st.session_state.kp = get_input(config["kp"])
+    else:
+        st.session_state.kp = 0
+
+    if "I" in st.session_state.controllerType:
+        st.session_state.ki = get_input(config["ki"])
+    else:
+        st.session_state.ki = 0
+
+    if "D" in st.session_state.controllerType:
+        st.session_state.kd = get_input(config["kd"])
+    else:
+        st.session_state.kd = 0
+
+    ports = [port.device for port in serial.tools.list_ports.comports()]
+    st.session_state.portNumber = st.selectbox(
+        config["port"]["label"], ports, index=len(ports) - 1,
         disabled=st.session_state.disabled
     )
 
-    time_step_cfg = config["time_step"]
-    time_step = st.number_input(
-        time_step_cfg["label"],
-        time_step_cfg["min"],
-        time_step_cfg["max"],
-        time_step_cfg["default"],
-        time_step_cfg["step"],
-        disabled=st.session_state.disabled
-    )
-
-    simulation_time_cfg = config["simulation_time"]
-    simulation_time = st.number_input(
-        simulation_time_cfg["label"],
-        simulation_time_cfg["min"],
-        simulation_time_cfg["max"],
-        simulation_time_cfg["default"],
-        simulation_time_cfg["step"],
-        disabled=st.session_state.disabled
-    )
+def connect_device(vendor_id, product_id):
+    device = hid.device()
+    device.open(vendor_id, product_id)
+    return device
 
 
-    st.write("Parámetros del controlador")
-    
-    controller_cfg = config["controller_type"]
-    controllerType = st.selectbox(
-        controller_cfg["label"],
-        controller_cfg["options"],
-        index=controller_cfg["options"].index(controller_cfg["default"]),
-        disabled=st.session_state.disabled
-    )
+def data_collection_loop(stop_event, vendor_id, product_id, csv_file_name):
+    data_count = 0
+    HR_bit = 0
+    SPO2_bit = 0
+    PPG_bit = 0
 
-    kp_cfg = config["kp"]
-    ki_cfg = config["ki"]
-    kd_cfg = config["kd"]
-    kp = st.number_input(kp_cfg["label"], kp_cfg["min"], kp_cfg["max"], kp_cfg["default"], kp_cfg["step"],
-        disabled=st.session_state.disabled) if "P" in controllerType else 0
-    ki = st.number_input(ki_cfg["label"], ki_cfg["min"], ki_cfg["max"], ki_cfg["default"], ki_cfg["step"],
-        disabled=st.session_state.disabled) if "I" in controllerType else 0
-    kd = st.number_input(kd_cfg["label"], kd_cfg["min"], kd_cfg["max"], kd_cfg["default"], kd_cfg["step"],
-        disabled=st.session_state.disabled) if "D" in controllerType else 0
+    try:
+        device = connect_device(vendor_id, product_id)
+    except Exception as e:
+        print(f"[ERROR] Could not connect to device: {e}")
+        return
 
-    port_cfg = config["port"]
-    ports = serial.tools.list_ports.comports()
-    portsD = []
-    for port in ports:
-        portsD.append(port.device)
-    portNumber = st.selectbox(
-        port_cfg["label"],
-        portsD,
-        index=portsD.index(portsD[-1]),
-        disabled=st.session_state.disabled
-    )
+    try:
+        with open(csv_file_name, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['Count', 'PPG', 'HR', 'SPO2', "TimeStamp"])
 
-    return setpoint, time_step, simulation_time, controllerType, kp, ki, kd, portNumber
+            while not stop_event.is_set():
+                try:
+                    data = device.read(18)
+                    if not data:
+                        raise OSError("No data read; device may be disconnected.")
+
+                    current_time = time.time()
+                    formatted_time = datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
+                    for i in range(3):
+                        data_update_bit = data[1 + 6 * i]
+                        if data_update_bit == 0:
+                            PPG_bit = data[3 + 6 * i]
+                        elif data_update_bit == 1:
+                            HR_bit = data[3 + 6 * i]
+                            SPO2_bit = data[4 + 6 * i]
+                        if SPO2_bit > 0:
+                            writer.writerow([data_count, PPG_bit, HR_bit, SPO2_bit, f"{formatted_time}{i}"])
+                            data_count += 1
+
+                    file.flush()
+
+                except Exception as e:
+                    print(f"[WARNING] Device error: {e}")
+                    try:
+                        device.close()
+                    except:
+                        pass
+
+                    #time.sleep(2)
+                    try:
+                        device = connect_device(vendor_id, product_id)
+                        print("[INFO] Reconnected to device.")
+                    except Exception as e:
+                        print(f"[ERROR] Reconnection failed: {e}")
+                        break
+
+    finally:
+        try:
+            device.close()
+        except:
+            pass
+        print("[INFO] Data collection loop terminated.")
 
 
 def main():
     clear_page("Teve-UCI")
     set_session()
     st.sidebar.markdown("# Controlador PID")
-    placeholder1 = st.empty()
-    col1, col2 = st.columns(2)
-    with col1:
-        placeholder2 = st.empty()
-    with col2:
-        placeholder3 = st.empty()
+
     with st.sidebar:
-        setpoint, time_step, simulation_time, controllerType, kp, ki, kd, portNumber = get_params()
-        if "arduino" not in st.session_state:
-            st.session_state.arduino = serial.Serial(portNumber, 9600, timeout=1)
+        get_params()
+        if "arduino" not in st.session_state or not st.session_state.arduino.is_open:
+            try:
+                st.session_state.arduino = serial.Serial(st.session_state.portNumber, 9600, timeout=1)
+                time.sleep(2)
+            except Exception as e:
+                st.error(f"No se pudo abrir el puerto {st.session_state.portNumber}: {e}")
+                return
+
         if not st.session_state.running:
             if st.button("START", type="primary"):
-                save_config(setpoint, time_step, simulation_time, controllerType, kp, ki, kd, portNumber)
+                save_config()
                 start()
         else:
             if st.button("STOP", type="secondary"):
                 stop()
 
-
     if st.session_state.running:
-        run_controller(setpoint, kp, ki, kd, time_step, simulation_time, placeholder1, placeholder2, placeholder3)
+        run_controller()
         stop()
-
     else:
-        plot(placeholder1, placeholder2, placeholder3)
+        plot()
 
 
 if __name__ == "__main__":

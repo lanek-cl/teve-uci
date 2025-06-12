@@ -20,6 +20,7 @@ import serial
 import serial.tools.list_ports
 import csv
 import numpy as np
+import io
 
 def clear_page(title="Lanek"):
     st.set_page_config(page_title=title, layout="wide")
@@ -49,16 +50,7 @@ class PIDController:
         self.previous_error = error
         return output
 
-
-def read_last_row(file_path):
-    with open(file_path, 'rb') as f:
-        f.seek(-2, 2)  # Jump to the second last byte
-        while f.read(1) != b'\n':  # Move backwards until newline
-            f.seek(-2, 1)
-        last_line = f.readline().decode()
-    return last_line.strip()
-
-def get_sat():
+def get_sat_old():
     df = pl.read_csv("csv/Output1.csv")
     spo2 = df[-1, "SPO2"]
     ts = df[-1, "TimeStamp"]
@@ -67,7 +59,7 @@ def get_sat():
     count = df[-1, "Count"]
     return min(spo2, 100), ts, hr, ppg, count
 
-def get_sat_old():
+def get_sat():
     with open("csv/Output1.csv", "rb") as f:
         f.seek(-2, 2)  # Move to second last byte
         while f.read(1) != b'\n':
@@ -93,6 +85,24 @@ def get_sat_old():
     count = float(row_dict["Count"])
     return min(spo2, 100), ts, hr, ppg, count
 
+
+def get_sat_new():
+    with open("csv/Output1.csv", "rb") as f:
+        try:
+            f.seek(-500, 2)  # Go to near the end of the file (500 bytes before EOF)
+        except OSError:
+            f.seek(0)  # File is smaller than 500 bytes
+        lines = f.readlines()
+        last_line = lines[-1].decode()
+    
+    # Now parse the line manually or with Polars
+    df = pl.read_csv(io.StringIO(last_line), has_header=False, new_columns=["TimeStamp", "SPO2", "HR", "PPG", "Count"])
+    spo2 = df[0, "SPO2"]
+    ts = df[0, "TimeStamp"]
+    hr = df[0, "HR"]
+    ppg = df[0, "PPG"]
+    count = df[0, "Count"]
+    return min(spo2, 100), ts, hr, ppg, count
 
 def export_data_to_csv():
     df = pd.DataFrame({
@@ -225,38 +235,51 @@ def run_controller():
     LOST = 0
     while time.time() - start_time <= st.session_state.simulation_time:
         time.sleep(st.session_state.time_step)
-        #now = time.time() - start_time
-        current_saturation, current_timestamp, hr, ppg, count = get_sat()
+
+        # Retry logic for stale data
+        attempts = 3
+        for _ in range(attempts):
+            current_saturation, current_timestamp, hr, ppg, count = get_sat()
+            if count != st.session_state.lastTS:
+                break
+            time.sleep(0.005)
+
         if count != st.session_state.lastTS:
             error = st.session_state.setpoint - current_saturation
             valve_opening = pid.control(error, st.session_state.time_step)
             set_open(int(valve_opening * 255))
+
+            # Append real data
             st.session_state.timestamps.append(current_timestamp)
             st.session_state.saturation_values.append(current_saturation)
             st.session_state.hr_values.append(hr)
             st.session_state.ppg_values.append(ppg)
             st.session_state.valve_opening_values.append(valve_opening)
             st.session_state.errors.append(error)
-            st.session_state.reference = [st.session_state.setpoint] * len(st.session_state.timestamps)
             st.session_state.lastTS = count
-            st.session_state.placeholder0.empty()
             LOST = 0
         else:
+            # Append NaNs if data is stale
             current_time = time.time()
             formatted_time = datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
             st.session_state.timestamps.append(formatted_time)
             st.session_state.saturation_values.append(np.nan)
             st.session_state.hr_values.append(np.nan)
             st.session_state.ppg_values.append(np.nan)
             st.session_state.valve_opening_values.append(np.nan)
             st.session_state.errors.append(np.nan)
-            st.session_state.reference = [st.session_state.setpoint] * len(st.session_state.timestamps)
-
             LOST += 1
-            if LOST > MAX_LOST:
-                st.session_state.placeholder0.error("Data stream stopped, check device.")
-            else:
-                st.session_state.placeholder0.empty()
+
+        # Reference updated in both branches
+        st.session_state.reference = [st.session_state.setpoint] * len(st.session_state.timestamps)
+
+        # Status handling
+        if LOST > MAX_LOST:
+            st.session_state.placeholder0.error("Data stream stopped, check device.")
+        else:
+            st.session_state.placeholder0.empty()
+
         plot()
 
 
