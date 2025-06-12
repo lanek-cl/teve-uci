@@ -1,7 +1,7 @@
 import time
 import hid
 import csv
-import numpy as np
+from datetime import datetime
 
 # Delay the start time of data collection
 def delay_start(delay_time):
@@ -31,7 +31,7 @@ def collect_data(device, VENDOR_ID, PRODUCT_ID, csvFileName):
 
     with open(csvFileName, 'w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(['Count', 'PPG', 'HR', 'SPO2'])
+        writer.writerow(['Count', 'PPG', 'HR', 'SPO2', "TimeStamp"])
 
     while True:
         try:
@@ -42,6 +42,7 @@ def collect_data(device, VENDOR_ID, PRODUCT_ID, csvFileName):
 
             #print(data)
             current_time = time.time()
+            formatted_time = datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
             time_count = current_time - start_time
 
             for i in range(3):
@@ -55,7 +56,7 @@ def collect_data(device, VENDOR_ID, PRODUCT_ID, csvFileName):
 
                 with open(csvFileName, 'a', newline='') as file:
                     writer = csv.writer(file)
-                    writer.writerow([data_count, PPG_bit, HR_bit, SPO2_bit])
+                    writer.writerow([data_count, PPG_bit, HR_bit, SPO2_bit, formatted_time])
                     #print("HR_BPM:", HR_bit, "- SpO2:", SPO2_bit)
                 data_count += 1
 
