@@ -1,12 +1,10 @@
-int motor1pin1 = 2;
-int motor1pin2 = 3;
-
+int air = 3;
 int open = 0;
 
 void setup() {
-  pinMode(motor1pin1, OUTPUT);
-  pinMode(motor1pin2, OUTPUT);
+  pinMode(air, OUTPUT);
   Serial.begin(9600); // Start serial at 9600 baud
+  analogWrite(air, open);
 }
 
 void loop() {
@@ -19,7 +17,5 @@ void loop() {
       open = val;
     }
   }
-
-  analogWrite(motor1pin1, open);
-  analogWrite(motor1pin2, 0);
+  analogWrite(air, open);
 }
