@@ -1,3 +1,3 @@
 @echo off
-call scripts\start_alone.bat
+call scripts\start_streaming.bat
 exit
