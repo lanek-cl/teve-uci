@@ -25,26 +25,17 @@ def clear_page(title="Lanek"):
     st.set_page_config(page_title=title, layout="wide")
 
 
-
-
-def get_sat_old():
-    df = pl.read_csv("csv/Output1.csv")
-    spo2 = df[-1, "SPO2"]
-    ts = df[-1, "TimeStamp"]
-    hr = df[-1, "HR"]
-    ppg = df[-1, "PPG"]
-    count = df[-1, "Count"]
-    return min(spo2, 100), ts, hr, ppg, count
+RAW_DATA = "csv/raw_data.csv"
 
 def get_sat():
-    with open("csv/Output1.csv", "rb") as f:
+    with open(RAW_DATA, "rb") as f:
         f.seek(-2, 2)  # Move to second last byte
         while f.read(1) != b'\n':
             f.seek(-2, 1)
         last_line = f.readline().decode().strip()
 
     # Re-read the header to map column names
-    with open("csv/Output1.csv", "r", newline='') as f:
+    with open(RAW_DATA, "r", newline='') as f:
         header = next(f).strip().split(",")
 
     # Skip if last_line is empty or malformed
@@ -62,24 +53,6 @@ def get_sat():
     count = float(row_dict["Count"])
     return min(spo2, 100), ts, hr, ppg, count
 
-
-def get_sat_new():
-    with open("csv/Output1.csv", "rb") as f:
-        try:
-            f.seek(-500, 2)  # Go to near the end of the file (500 bytes before EOF)
-        except OSError:
-            f.seek(0)  # File is smaller than 500 bytes
-        lines = f.readlines()
-        last_line = lines[-1].decode()
-    
-    # Now parse the line manually or with Polars
-    df = pl.read_csv(io.StringIO(last_line), has_header=False, new_columns=["TimeStamp", "SPO2", "HR", "PPG", "Count"])
-    spo2 = df[0, "SPO2"]
-    ts = df[0, "TimeStamp"]
-    hr = df[0, "HR"]
-    ppg = df[0, "PPG"]
-    count = df[0, "Count"]
-    return min(spo2, 100), ts, hr, ppg, count
 
 def export_data_to_csv():
     df = pd.DataFrame({

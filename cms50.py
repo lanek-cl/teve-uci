@@ -60,7 +60,7 @@ def collect_data(device, VENDOR_ID, PRODUCT_ID, csvFileName):
 
 
 if __name__ == '__main__':
-    name = input("Ingrese nombre del archivo: ")
+    name = "raw_data" #input("Ingrese nombre del archivo: ")
     VENDOR_ID = 0x28E9
     PRODUCT_ID = 0x028A
     csvPath = 'csv/'

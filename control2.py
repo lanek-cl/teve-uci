@@ -26,7 +26,7 @@ import altair as alt
 def clear_page(title="Lanek"):
     st.set_page_config(page_title=title, layout="wide")
 
-
+RAW_DATA = 'csv/raw_data.csv'
 class PIDController:
     def __init__(self, kp, ki, kd, time_step, output_min=0, output_max=1):
         self.kp = kp * 0.1 / time_step
@@ -51,8 +51,51 @@ class PIDController:
         self.previous_error = error
         return output
 
+
+def get_sat(max_retries=5, delay=0.1):
+    for attempt in range(max_retries):
+        try:
+            with open(RAW_DATA, "rb") as f:
+                f.seek(0, 2)  # EOF
+                filesize = f.tell()
+
+                pos = max(filesize - 2, 0)
+                f.seek(pos)
+
+                while True:
+                    byte = f.read(1)
+                    if byte == b'\n' or pos == 0:
+                        break
+                    pos = max(pos - 2, 0)
+                    f.seek(pos)
+
+                last_line = f.readline().decode().strip()
+
+            with open(RAW_DATA, "r", newline='') as f:
+                header = next(f).strip().split(",")
+
+            if not last_line or len(last_line.split(",")) != len(header):
+                raise ValueError("Last line is empty or malformed")
+
+            values = last_line.split(",")
+            row_dict = dict(zip(header, values))
+
+            spo2 = float(row_dict["SPO2"])
+            hr = float(row_dict["HR"])
+            ppg = float(row_dict["PPG"])
+            ts = row_dict["TimeStamp"]
+            count = float(row_dict["Count"])
+            return min(spo2, 100), ts, hr, ppg, count
+
+        except (OSError, ValueError, KeyError):
+            time.sleep(delay)  # wait a bit before retrying
+
+    # If all retries fail, return NaNs and empty timestamp
+    return np.nan, "", np.nan, np.nan, np.nan
+
+
 def get_sat_old():
-    df = pl.read_csv("csv/Output1.csv")
+    df = pl.read_csv("csv/raw_data.csv")
     spo2 = df[-1, "SPO2"]
     ts = df[-1, "TimeStamp"]
     hr = df[-1, "HR"]
@@ -60,15 +103,15 @@ def get_sat_old():
     count = df[-1, "Count"]
     return min(spo2, 100), ts, hr, ppg, count
 
-def get_sat():
-    with open("csv/Output1.csv", "rb") as f:
+def get_sat_prob():
+    with open(RAW_DATA, "rb") as f:
         f.seek(-2, 2)  # Move to second last byte
         while f.read(1) != b'\n':
             f.seek(-2, 1)
         last_line = f.readline().decode().strip()
 
     # Re-read the header to map column names
-    with open("csv/Output1.csv", "r", newline='') as f:
+    with open(RAW_DATA, "r", newline='') as f:
         header = next(f).strip().split(",")
 
     # Skip if last_line is empty or malformed
@@ -88,7 +131,7 @@ def get_sat():
 
 
 def get_sat_new():
-    with open("csv/Output1.csv", "rb") as f:
+    with open("csv/raw_data.csv", "rb") as f:
         try:
             f.seek(-500, 2)  # Go to near the end of the file (500 bytes before EOF)
         except OSError:
@@ -154,33 +197,31 @@ def plot_altair():
     if not st.session_state.timestamps:
         return
 
-    ts = pd.to_datetime(st.session_state.timestamps)
-
     # Calculate valve opening in percent
     satPC = [v * 100 for v in st.session_state.valve_opening_values]
 
     # === 1. Saturación & Referencia ===
+    ts = pd.to_datetime(st.session_state.timestamps)
+
+    # 1. Saturación & Referencia (with dashed red line for Referencia)
     df_saturation = pd.DataFrame({
         "Tiempo": ts,
         "Saturación": st.session_state.saturation_values,
         "Referencia": st.session_state.reference
     })
 
-    df1_long = df_saturation.melt(id_vars=["Tiempo"], var_name="Tipo", value_name="Valor")
+    df_sat_long = df_saturation.melt(id_vars=["Tiempo"], var_name="Tipo", value_name="Valor")
 
-    saturacion = alt.Chart(df1_long[df1_long["Tipo"] == "Saturación"]).mark_line(color="blue").encode(
+    chart1 = alt.Chart(df_sat_long).mark_line().encode(
         x=alt.X("Tiempo:T", title="Tiempo"),
-        y=alt.Y("Valor:Q", title="SpO₂ (%)", scale=alt.Scale(domain=[min(st.session_state.saturation_values), 100]))
-    )
-
-    # Referencia line (dashed red)
-    referencia = alt.Chart(df1_long[df1_long["Tipo"] == "Referencia"]).mark_line(color="red", strokeDash=[5,5]).encode(
-        x=alt.X("Tiempo:T"),
-        y=alt.Y("Valor:Q")
-    )
-
-    chart1 = saturacion + referencia
-    chart1 = chart1.properties(
+        y=alt.Y("Valor:Q", title="SpO₂ (%)", scale=alt.Scale(domain=[min(st.session_state.saturation_values), 100])),
+        color=alt.Color("Tipo:N", scale=alt.Scale(domain=["Saturación", "Referencia"], range=["blue", "red"])),
+        strokeDash=alt.condition(
+            alt.datum.Tipo == "Referencia",
+            alt.value([5, 5]),  # dashed for "Referencia"
+            alt.value([1])       # solid for "Saturación"
+        )
+    ).properties(
         title="Saturación de Oxígeno",
         height=300
     )
