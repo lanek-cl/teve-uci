@@ -19,6 +19,7 @@ import json
 import csv
 import numpy as np
 import io
+import altair as alt
 
 def clear_page(title="Lanek"):
     st.set_page_config(page_title=title, layout="wide")
@@ -98,11 +99,35 @@ def export_data_to_csv():
 
 
 def plot():
+    if st.session_state.timestamps and st.session_state.saturation_values:
+        ts = st.session_state.timestamps
 
-    fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.saturation_values, name="Saturación", line=dict(color="blue")))
-    fig1.update_layout(title="Saturación de Oxígeno", xaxis_title="Tiempo (s)", yaxis_title="SpO₂ (%)")
-    st.session_state.placeholder1.plotly_chart(fig1, use_container_width=True)
+        df_saturation = pd.DataFrame({
+            "Tiempo": ts,
+            "Saturación": st.session_state.saturation_values,
+            "Referencia": st.session_state.reference
+        })
+
+        df1_long = df_saturation.melt(id_vars=["Tiempo"], var_name="Tipo", value_name="Valor")
+
+        saturacion = alt.Chart(df1_long[df1_long["Tipo"] == "Saturación"]).mark_line(color="blue").encode(
+            x=alt.X("Tiempo:T", title="Tiempo"),
+            y=alt.Y("Valor:Q", title="SpO₂ (%)", scale=alt.Scale(domain=[min(st.session_state.saturation_values), 100]))
+        )
+
+        # Referencia line (dashed red)
+        referencia = alt.Chart(df1_long[df1_long["Tipo"] == "Referencia"]).mark_line(color="red", strokeDash=[5,5]).encode(
+            x=alt.X("Tiempo:T"),
+            y=alt.Y("Valor:Q")
+        )
+
+        chart1 = saturacion + referencia
+        chart1 = chart1.properties(
+            title="Saturación de Oxígeno",
+            height=300
+        )
+
+        st.session_state.placeholder1.altair_chart(chart1, use_container_width=True)
 
 
 
@@ -185,6 +210,8 @@ def set_session():
         st.session_state.placeholder2 = st.empty()
     with col2:
         st.session_state.placeholder3 = st.empty()
+
+
 
 def run_controller():
    

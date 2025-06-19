@@ -21,6 +21,7 @@ import serial.tools.list_ports
 import csv
 import numpy as np
 import io
+import altair as alt
 
 def clear_page(title="Lanek"):
     st.set_page_config(page_title=title, layout="wide")
@@ -120,8 +121,15 @@ def export_data_to_csv():
     df.to_csv(filepath, index=False)
     return filepath
 
-
 def plot():
+    if st.session_state.plot == "altair":
+        plot_altair()
+    if st.session_state.plot == "plotly":
+        plot_plotly()
+    if st.session_state.plot == "streamlit":
+        plot_streamlit()
+
+def plot_plotly():
     satPC = []
     for i in st.session_state.valve_opening_values:
         satPC.append(i*100)
@@ -142,6 +150,102 @@ def plot():
     fig3.update_layout(title="Error", xaxis_title="Tiempo (s)", yaxis_title="Error (%)")
     st.session_state.placeholder3.plotly_chart(fig3, use_container_width=True)
 
+def plot_altair():
+    if not st.session_state.timestamps:
+        return
+
+    ts = pd.to_datetime(st.session_state.timestamps)
+
+    # Calculate valve opening in percent
+    satPC = [v * 100 for v in st.session_state.valve_opening_values]
+
+    # === 1. Saturación & Referencia ===
+    df_saturation = pd.DataFrame({
+        "Tiempo": ts,
+        "Saturación": st.session_state.saturation_values,
+        "Referencia": st.session_state.reference
+    })
+
+    df1_long = df_saturation.melt(id_vars=["Tiempo"], var_name="Tipo", value_name="Valor")
+
+    saturacion = alt.Chart(df1_long[df1_long["Tipo"] == "Saturación"]).mark_line(color="blue").encode(
+        x=alt.X("Tiempo:T", title="Tiempo"),
+        y=alt.Y("Valor:Q", title="SpO₂ (%)", scale=alt.Scale(domain=[min(st.session_state.saturation_values), 100]))
+    )
+
+    # Referencia line (dashed red)
+    referencia = alt.Chart(df1_long[df1_long["Tipo"] == "Referencia"]).mark_line(color="red", strokeDash=[5,5]).encode(
+        x=alt.X("Tiempo:T"),
+        y=alt.Y("Valor:Q")
+    )
+
+    chart1 = saturacion + referencia
+    chart1 = chart1.properties(
+        title="Saturación de Oxígeno",
+        height=300
+    )
+
+    st.session_state.placeholder1.altair_chart(chart1, use_container_width=True)
+
+    # === 2. Apertura ===
+    df_valve = pd.DataFrame({
+        "Tiempo": ts,
+        "Apertura (%)": satPC
+    })
+
+    chart2 = alt.Chart(df_valve).mark_line(color="green").encode(
+        x=alt.X("Tiempo:T", title="Tiempo"),
+        y=alt.Y("Apertura (%):Q", title="Apertura (%)", scale=alt.Scale(domain=[min(satPC), 100]))
+    ).properties(
+        title="Apertura",
+        height=300
+    )
+
+    st.session_state.placeholder2.altair_chart(chart2, use_container_width=True)
+
+    # === 3. Error ===
+    df_error = pd.DataFrame({
+        "Tiempo": ts,
+        "Error": st.session_state.errors
+    })
+
+    chart3 = alt.Chart(df_error).mark_line(color="purple").encode(
+        x=alt.X("Tiempo:T", title="Tiempo"),
+        y=alt.Y("Error:Q", title="Error (%)", scale=alt.Scale(domain=[min(st.session_state.errors), max(st.session_state.errors)]))
+    ).properties(
+        title="Error",
+        height=300
+    )
+
+    st.session_state.placeholder3.altair_chart(chart3, use_container_width=True)
+
+
+def plot_streamlit():
+    if not st.session_state.timestamps:
+        return
+
+    # Format time (just HH:MM:SS) for axis labeling if needed
+    ts = [t.split(" ")[1] for t in st.session_state.timestamps]
+
+    # === 1. Saturación de Oxígeno ===
+    df1 = pd.DataFrame({
+        "Saturación": st.session_state.saturation_values,
+        "Referencia": st.session_state.reference,
+    }, index=ts)
+    st.session_state.placeholder1.line_chart(df1)
+
+    # === 2. Apertura válvula (%)
+    valve_pct = np.array(st.session_state.valve_opening_values) * 100
+    df2 = pd.DataFrame({
+        "Apertura válvula": valve_pct,
+    }, index=ts)
+    st.session_state.placeholder2.line_chart(df2)
+
+    # === 3. Error
+    df3 = pd.DataFrame({
+        "Error": st.session_state.errors,
+    }, index=ts)
+    st.session_state.placeholder3.line_chart(df3)
 
 def load_config():
     with open("config.json", "r") as f:
@@ -215,7 +319,7 @@ def set_session():
         "running": False,
         "setpoint": 95.0,
         "lastTS": None,
-        
+        "plot": "altair",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -321,6 +425,13 @@ def get_params():
         config["port"]["label"], ports, index=len(ports) - 1,
         disabled=st.session_state.disabled
     )
+
+    st.session_state.plot = st.selectbox(
+        "Plot backend", ["altair", "plotly", "streamlit"],
+        disabled=st.session_state.disabled
+    )
+
+
 
 
 def main():

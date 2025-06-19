@@ -24,6 +24,7 @@ import io
 import threading
 from multiprocessing import Process, Event
 import hid
+import altair as alt
 #from cms50 import data_collection_loop
 
 RAW_DATA = 'csv/raw_data.csv'
@@ -132,7 +133,16 @@ def export_data_to_csv():
     return filepath
 
 
+
 def plot():
+    if st.session_state.plot == "altair":
+        plot_altair()
+    if st.session_state.plot == "plotly":
+        plot_plotly()
+    if st.session_state.plot == "streamlit":
+        plot_streamlit()
+
+def plot_plotly():
     satPC = []
     for i in st.session_state.valve_opening_values:
         satPC.append(i*100)
@@ -162,6 +172,140 @@ def plot():
     fig5.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.ppg_values, name="PPG", line=dict(color="blue")))
     fig5.update_layout(title="PPG", xaxis_title="Tiempo (s)", yaxis_title="PPG")
     st.session_state.placeholder5.plotly_chart(fig5, use_container_width=True)
+
+def plot_altair():
+    if not st.session_state.timestamps:
+        return
+
+    # Parse timestamps as datetime
+    #ts = [t.split(" ")[1] for t in st.session_state.timestamps]
+    ts = pd.to_datetime(st.session_state.timestamps)
+
+    # 1. Saturación & Referencia (with dashed red line for Referencia)
+    df1 = pd.DataFrame({
+        "Tiempo": ts,
+        "Saturación": st.session_state.saturation_values,
+        "Referencia": st.session_state.reference,
+    })
+    df1_long = df1.melt(id_vars=["Tiempo"], var_name="Tipo", value_name="Valor")
+
+    saturacion = alt.Chart(df1_long[df1_long["Tipo"] == "Saturación"]).mark_line(color="blue").encode(
+        x=alt.X("Tiempo:T", title="Tiempo"),
+        y=alt.Y("Valor:Q", title="SpO₂ (%)", scale=alt.Scale(domain=[min(st.session_state.saturation_values), 100]))
+    )
+
+    # Referencia line (dashed red)
+    referencia = alt.Chart(df1_long[df1_long["Tipo"] == "Referencia"]).mark_line(color="red", strokeDash=[5,5]).encode(
+        x=alt.X("Tiempo:T"),
+        y=alt.Y("Valor:Q")
+    )
+
+    chart1 = saturacion + referencia
+    chart1 = chart1.properties(
+        title="Saturación de Oxígeno",
+        height=300
+    )
+    st.session_state.placeholder1.altair_chart(chart1, use_container_width=True)
+
+    # 2. Apertura válvula (%)
+    valve_pct = np.array(st.session_state.valve_opening_values) * 100
+    df2 = pd.DataFrame({
+        "Tiempo": ts,
+        "Apertura válvula": valve_pct
+    })
+
+    chart2 = alt.Chart(df2).mark_line(color="green").encode(
+        x=alt.X("Tiempo:T", title="Tiempo"),
+        y=alt.Y("Apertura válvula:Q", title="Apertura (%)", scale=alt.Scale(domain=[min(valve_pct), max(valve_pct)]))
+    ).properties(
+        title="Apertura",
+        height=300
+    )
+    st.session_state.placeholder2.altair_chart(chart2, use_container_width=True)
+
+    # 3. Error
+    df3 = pd.DataFrame({
+        "Tiempo": ts,
+        "Error": st.session_state.errors
+    })
+
+    chart3 = alt.Chart(df3).mark_line(color="purple").encode(
+        x=alt.X("Tiempo:T", title="Tiempo"),
+        y=alt.Y("Error:Q", title="Error (%)", scale=alt.Scale(domain=[min(st.session_state.errors), max(st.session_state.errors)]))
+    ).properties(
+        title="Error",
+        height=300
+    )
+    st.session_state.placeholder3.altair_chart(chart3, use_container_width=True)
+
+    # 4. HR
+    df4 = pd.DataFrame({
+        "Tiempo": ts,
+        "HR": st.session_state.hr_values
+    })
+
+    chart4 = alt.Chart(df4).mark_line(color="blue").encode(
+        x=alt.X("Tiempo:T", title="Tiempo"),
+        y=alt.Y("HR:Q", title="HR (BPM)", scale=alt.Scale(domain=[min(st.session_state.hr_values), max(st.session_state.hr_values)]))
+    ).properties(
+        title="HR",
+        height=300
+    )
+    st.session_state.placeholder4.altair_chart(chart4, use_container_width=True)
+
+    # 5. PPG
+    df5 = pd.DataFrame({
+        "Tiempo": ts,
+        "PPG": st.session_state.ppg_values
+    })
+
+    chart5 = alt.Chart(df5).mark_line(color="blue").encode(
+        x=alt.X("Tiempo:T", title="Tiempo"),
+        y=alt.Y("PPG:Q", title="PPG", scale=alt.Scale(domain=[min(st.session_state.ppg_values), max(st.session_state.ppg_values)]))
+    ).properties(
+        title="PPG",
+        height=300
+    )
+    st.session_state.placeholder5.altair_chart(chart5, use_container_width=True)
+
+def plot_streamlit():
+    if not st.session_state.timestamps:
+        return
+
+    # Use full timestamps or just time part (HH:MM:SS) for x-axis labels
+    ts = [t.split(" ")[1] for t in st.session_state.timestamps]
+
+    # 1. Saturación & Referencia
+    df1 = pd.DataFrame({
+        "Saturación": st.session_state.saturation_values,
+        "Referencia": st.session_state.reference,
+    }, index=ts)
+    st.session_state.placeholder1.line_chart(df1)
+
+    # 2. Apertura válvula (%)
+    valve_pct = np.array(st.session_state.valve_opening_values) * 100
+    df2 = pd.DataFrame({
+        "Apertura válvula": valve_pct,
+    }, index=ts)
+    st.session_state.placeholder2.line_chart(df2)
+
+    # 3. Error
+    df3 = pd.DataFrame({
+        "Error": st.session_state.errors,
+    }, index=ts)
+    st.session_state.placeholder3.line_chart(df3)
+
+    # 4. HR
+    df4 = pd.DataFrame({
+        "HR": st.session_state.hr_values,
+    }, index=ts)
+    st.session_state.placeholder4.line_chart(df4)
+
+    # 5. PPG
+    df5 = pd.DataFrame({
+        "PPG": st.session_state.ppg_values,
+    }, index=ts)
+    st.session_state.placeholder5.line_chart(df5)
 
 
 def load_config():
@@ -268,7 +412,7 @@ def set_session():
         "running": False,
         "setpoint": 95.0,
         "lastTS": None,
-        
+        "plot": "altair",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -379,6 +523,10 @@ def get_params():
     ports = [port.device for port in serial.tools.list_ports.comports()]
     st.session_state.portNumber = st.selectbox(
         config["port"]["label"], ports, index=len(ports) - 1,
+        disabled=st.session_state.disabled
+    )
+    st.session_state.plot = st.selectbox(
+        "Plot backend", ["altair", "plotly", "streamlit"],
         disabled=st.session_state.disabled
     )
 
