@@ -315,64 +315,83 @@ def set_session():
     with col2:
         st.session_state.placeholder3 = st.empty()
 
-def run_controller():
-    pid = PIDController(st.session_state.kp, st.session_state.ki, st.session_state.kd, st.session_state.time_step)
+
+def get_fresh_data_with_retries(retries=3, delay=0.02):
+    for _ in range(retries):
+        current_saturation, current_timestamp, hr, ppg, count = get_sat()
+        if count != st.session_state.lastTS:
+            return current_saturation, current_timestamp, hr, ppg, count
+        time.sleep(delay)
+    return None 
+
+def update_state_with_valid_data(pid, current_saturation, current_timestamp, hr, ppg, count):
+    error = st.session_state.setpoint - current_saturation
+    valve_opening = pid.control(error, st.session_state.time_step)
+
+    pwm_value = int(180 + valve_opening * 75)
+    pwm_value = 0 if pwm_value == 180 else pwm_value
+    set_open(pwm_value)
+
+    flow = valve_opening * 15  # L/min
+
+    st.session_state.timestamps.append(current_timestamp)
+    st.session_state.saturation_values.append(current_saturation)
+    st.session_state.hr_values.append(hr)
+    st.session_state.ppg_values.append(ppg)
+    st.session_state.valve_opening_values.append(flow)
+    st.session_state.errors.append(error)
+    st.session_state.lastTS = count
+
+def update_state_with_nan():
+    current_time = time.time()
+    formatted_time = datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
+    st.session_state.timestamps.append(formatted_time)
+    st.session_state.saturation_values.append(np.nan)
+    st.session_state.hr_values.append(np.nan)
+    st.session_state.ppg_values.append(np.nan)
+    st.session_state.valve_opening_values.append(np.nan)
+    st.session_state.errors.append(np.nan)
+
+def update_status_display(LOST, MAX_LOST):
+    if LOST > MAX_LOST:
+        st.session_state.placeholder0.error("Data stream stopped, check device.")
+    else:
+        st.session_state.placeholder0.empty()
+
+
+
+def set_controller():
+    pid = PIDController(
+        st.session_state.kp,
+        st.session_state.ki,
+        st.session_state.kd,
+        st.session_state.time_step
+    )
+    return pid
+    
+
+def run_controller_loop(pid):
     start_time = time.time()
     MAX_LOST = 10
     LOST = 0
-    while time.time() - start_time <= st.session_state.simulation_time:
+    infinite = False if st.session_state.simulation_time > 0 else True
+    
+    while (time.time() - start_time <= st.session_state.simulation_time) or infinite:
         time.sleep(st.session_state.time_step)
 
-        # Retry logic for stale data
-        attempts = 3
-        for _ in range(attempts):
-            current_saturation, current_timestamp, hr, ppg, count = get_sat()
-            if count != st.session_state.lastTS:
-                break
-            time.sleep(0.02)  # Short delay before retrying
+        data = get_fresh_data_with_retries(retries=3, delay=0.02)
 
-        if count != st.session_state.lastTS:
-            error = st.session_state.setpoint - current_saturation
-            valve_opening = pid.control(error, st.session_state.time_step)
-            pwm_value = int(180 + valve_opening * 75)
-            flow = valve_opening * 15  # Convert to flow in L/min
-            if pwm_value == 180:
-                pwm_value = 0
-            set_open(pwm_value)
-
-            # Append real data
-            st.session_state.timestamps.append(current_timestamp)
-            st.session_state.saturation_values.append(current_saturation)
-            st.session_state.hr_values.append(hr)
-            st.session_state.ppg_values.append(ppg)
-            st.session_state.valve_opening_values.append(flow)
-            st.session_state.errors.append(error)
-            st.session_state.lastTS = count
+        if data:
+            current_saturation, current_timestamp, hr, ppg, count = data
+            update_state_with_valid_data(pid, current_saturation, current_timestamp, hr, ppg, count)
             LOST = 0
         else:
-            # Append NaNs if data is stale
-            current_time = time.time()
-            formatted_time = datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-
-            st.session_state.timestamps.append(formatted_time)
-            st.session_state.saturation_values.append(np.nan)
-            st.session_state.hr_values.append(np.nan)
-            st.session_state.ppg_values.append(np.nan)
-            st.session_state.valve_opening_values.append(np.nan)
-            st.session_state.errors.append(np.nan)
+            update_state_with_nan()
             LOST += 1
-
-        # Reference updated in both branches
         st.session_state.reference = [st.session_state.setpoint] * len(st.session_state.timestamps)
-
-        # Status handling
-        if LOST > MAX_LOST:
-            st.session_state.placeholder0.error("Data stream stopped, check device.")
-        else:
-            st.session_state.placeholder0.empty()
-
+        update_status_display(LOST, MAX_LOST)
         plot()
-
 
 def get_params():
     st.write("Parámetros de simulación")
@@ -445,7 +464,8 @@ def main():
                 stop()
 
     if st.session_state.running:
-        run_controller()
+        pid = set_controller()
+        run_controller_loop(pid)
         stop()
     else:
         plot()
