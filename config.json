@@ -10,7 +10,7 @@
         "label": "Paso de simulacion",
         "min": 0.0,
         "max": 1.0,
-        "default": 0.1,
+        "default": 0.5,
         "step": 0.1
     },
     "simulation_time": {
@@ -34,14 +34,14 @@
         "label": "KP",
         "min": 0.0,
         "max": 4.0,
-        "default": 0.01,
+        "default": 0.05,
         "step": 0.1
     },
     "ki": {
         "label": "KI",
         "min": 0.0,
         "max": 10.0,
-        "default": 0.01,
+        "default": 0.05,
         "step": 0.1
     },
     "kd": {
@@ -53,6 +53,6 @@
     },
     "port": {
         "label": "Puerto Serial",
-        "default": "COM3"
+        "default": "COM1"
     }
 }
