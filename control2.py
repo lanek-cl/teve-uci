@@ -28,7 +28,7 @@ def clear_page(title="Lanek"):
 
 RAW_DATA = 'csv/raw_data.csv'
 class PIDController:
-    def __init__(self, kp, ki, kd, time_step, output_min=0, output_max=1):
+    def __init__(self, kp, ki, kd, time_step, output_min=0.0, output_max=1.0):
         self.kp = kp * 0.1 / time_step
         self.ki = ki * 0.1 / time_step
         self.kd = kd * 0.1 / time_step
@@ -198,7 +198,7 @@ def plot_altair():
         return
 
     # Calculate valve opening in percent
-    satPC = [v * 100 for v in st.session_state.valve_opening_values]
+    satPC = [v for v in st.session_state.valve_opening_values]
 
     # === 1. Saturación & Referencia ===
     ts = pd.to_datetime(st.session_state.timestamps)
@@ -214,7 +214,7 @@ def plot_altair():
 
     chart1 = alt.Chart(df_sat_long).mark_line().encode(
         x=alt.X("Tiempo:T", title="Tiempo"),
-        y=alt.Y("Valor:Q", title="SpO₂ (%)", scale=alt.Scale(domain=[min(st.session_state.saturation_values), 100])),
+        y=alt.Y("Valor:Q", title="SpO₂ (%)", scale=alt.Scale(domain=[85, 100])),
         color=alt.Color("Tipo:N", scale=alt.Scale(domain=["Saturación", "Referencia"], range=["blue", "red"])),
         strokeDash=alt.condition(
             alt.datum.Tipo == "Referencia",
@@ -236,7 +236,7 @@ def plot_altair():
 
     chart2 = alt.Chart(df_valve).mark_line(color="green").encode(
         x=alt.X("Tiempo:T", title="Tiempo"),
-        y=alt.Y("Apertura (%):Q", title="Apertura (%)", scale=alt.Scale(domain=[min(satPC), 100]))
+        y=alt.Y("Apertura (%):Q", title="Apertura (%)", scale=alt.Scale(domain=[0, 15]))
     ).properties(
         title="Apertura",
         height=300
@@ -387,19 +387,24 @@ def run_controller():
             current_saturation, current_timestamp, hr, ppg, count = get_sat()
             if count != st.session_state.lastTS:
                 break
-            time.sleep(0.005)
+            time.sleep(0.02)  # Short delay before retrying
 
         if count != st.session_state.lastTS:
             error = st.session_state.setpoint - current_saturation
             valve_opening = pid.control(error, st.session_state.time_step)
-            set_open(int(valve_opening * 255))
+            pwm_value = int(180 + valve_opening * 75)
+            flow = valve_opening * 15  # Convert to flow in L/min
+            if pwm_value ==180:
+                pwm_value = 0
+            set_open(pwm_value)
+            
 
             # Append real data
             st.session_state.timestamps.append(current_timestamp)
             st.session_state.saturation_values.append(current_saturation)
             st.session_state.hr_values.append(hr)
             st.session_state.ppg_values.append(ppg)
-            st.session_state.valve_opening_values.append(valve_opening)
+            st.session_state.valve_opening_values.append(flow)
             st.session_state.errors.append(error)
             st.session_state.lastTS = count
             LOST = 0
