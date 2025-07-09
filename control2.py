@@ -28,7 +28,7 @@ def clear_page(title="Lanek"):
 
 RAW_DATA = 'csv/raw_data.csv'
 class PIDController:
-    def __init__(self, kp, ki, kd, time_step, output_min=0, output_max=1):
+    def __init__(self, kp, ki, kd, time_step, output_min=0.0, output_max=1.0):
         self.kp = kp * 0.1 / time_step
         self.ki = ki * 0.1 / time_step
         self.kd = kd * 0.1 / time_step
@@ -83,7 +83,7 @@ def get_sat(max_retries=5, delay=0.1):
             spo2 = float(row_dict["SPO2"])
             hr = float(row_dict["HR"])
             ppg = float(row_dict["PPG"])
-            ts = row_dict["TimeStamp"]
+            ts = row_dict["DateTime"]
             count = float(row_dict["Count"])
             return min(spo2, 100), ts, hr, ppg, count
 
@@ -92,61 +92,6 @@ def get_sat(max_retries=5, delay=0.1):
 
     # If all retries fail, return NaNs and empty timestamp
     return np.nan, "", np.nan, np.nan, np.nan
-
-
-def get_sat_old():
-    df = pl.read_csv("csv/raw_data.csv")
-    spo2 = df[-1, "SPO2"]
-    ts = df[-1, "TimeStamp"]
-    hr = df[-1, "HR"]
-    ppg = df[-1, "PPG"]
-    count = df[-1, "Count"]
-    return min(spo2, 100), ts, hr, ppg, count
-
-def get_sat_prob():
-    with open(RAW_DATA, "rb") as f:
-        f.seek(-2, 2)  # Move to second last byte
-        while f.read(1) != b'\n':
-            f.seek(-2, 1)
-        last_line = f.readline().decode().strip()
-
-    # Re-read the header to map column names
-    with open(RAW_DATA, "r", newline='') as f:
-        header = next(f).strip().split(",")
-
-    # Skip if last_line is empty or malformed
-    if not last_line or len(last_line.split(",")) != len(header):
-        raise ValueError("Last line is empty or malformed")
-
-    # Build a dictionary manually (avoiding DictReader on single line)
-    values = last_line.split(",")
-    row_dict = dict(zip(header, values))
-
-    spo2 = float(row_dict["SPO2"])
-    hr = float(row_dict["HR"])
-    ppg = float(row_dict["PPG"])
-    ts = row_dict["TimeStamp"]
-    count = float(row_dict["Count"])
-    return min(spo2, 100), ts, hr, ppg, count
-
-
-def get_sat_new():
-    with open("csv/raw_data.csv", "rb") as f:
-        try:
-            f.seek(-500, 2)  # Go to near the end of the file (500 bytes before EOF)
-        except OSError:
-            f.seek(0)  # File is smaller than 500 bytes
-        lines = f.readlines()
-        last_line = lines[-1].decode()
-    
-    # Now parse the line manually or with Polars
-    df = pl.read_csv(io.StringIO(last_line), has_header=False, new_columns=["TimeStamp", "SPO2", "HR", "PPG", "Count"])
-    spo2 = df[0, "SPO2"]
-    ts = df[0, "TimeStamp"]
-    hr = df[0, "HR"]
-    ppg = df[0, "PPG"]
-    count = df[0, "Count"]
-    return min(spo2, 100), ts, hr, ppg, count
 
 def export_data_to_csv():
     df = pd.DataFrame({
@@ -173,24 +118,21 @@ def plot():
         plot_streamlit()
 
 def plot_plotly():
-    satPC = []
-    for i in st.session_state.valve_opening_values:
-        satPC.append(i*100)
-
+    satPC = st.session_state.valve_opening_values
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.reference, name="Referencia", line=dict(color="red", dash="dash")))
     fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.saturation_values, name="Saturación", line=dict(color="blue")))
-    fig1.update_layout(title="Saturación de Oxígeno", xaxis_title="Tiempo (s)", yaxis_title="SpO₂ (%)")
+    fig1.update_layout(title="Saturación de Oxígeno", xaxis_title="Tiempo (s)", yaxis_title="SpO₂ (%)", height=400)
     st.session_state.placeholder1.plotly_chart(fig1, use_container_width=True)
 
     fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=st.session_state.timestamps, y=satPC, name="Apertura válvula", line=dict(color="green")))
-    fig2.update_layout(title="Apertura", xaxis_title="Tiempo (s)", yaxis_title="Apertura (%)")
+    fig2.add_trace(go.Scatter(x=st.session_state.timestamps, y=satPC, name="Flujo Aire", line=dict(color="green")))
+    fig2.update_layout(title="Flujo de Aire", xaxis_title="Tiempo (s)", yaxis_title="Flujo (L/m)", height=400)
     st.session_state.placeholder2.plotly_chart(fig2, use_container_width=True)
 
     fig3 = go.Figure()
     fig3.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.errors, name="Error", line=dict(color="purple")))
-    fig3.update_layout(title="Error", xaxis_title="Tiempo (s)", yaxis_title="Error (%)")
+    fig3.update_layout(title="Error de Control", xaxis_title="Tiempo (s)", yaxis_title="Error (%)", height=400)
     st.session_state.placeholder3.plotly_chart(fig3, use_container_width=True)
 
 def plot_altair():
@@ -198,10 +140,10 @@ def plot_altair():
         return
 
     # Calculate valve opening in percent
-    satPC = [v * 100 for v in st.session_state.valve_opening_values]
+    satPC = [v for v in st.session_state.valve_opening_values]
 
     # === 1. Saturación & Referencia ===
-    ts = pd.to_datetime(st.session_state.timestamps)
+    ts = st.session_state.timestamps
 
     # 1. Saturación & Referencia (with dashed red line for Referencia)
     df_saturation = pd.DataFrame({
@@ -214,7 +156,7 @@ def plot_altair():
 
     chart1 = alt.Chart(df_sat_long).mark_line().encode(
         x=alt.X("Tiempo:T", title="Tiempo"),
-        y=alt.Y("Valor:Q", title="SpO₂ (%)", scale=alt.Scale(domain=[min(st.session_state.saturation_values), 100])),
+        y=alt.Y("Valor:Q", title="SpO₂ (%)", scale=alt.Scale(domain=[85, 100])),
         color=alt.Color("Tipo:N", scale=alt.Scale(domain=["Saturación", "Referencia"], range=["blue", "red"])),
         strokeDash=alt.condition(
             alt.datum.Tipo == "Referencia",
@@ -231,14 +173,14 @@ def plot_altair():
     # === 2. Apertura ===
     df_valve = pd.DataFrame({
         "Tiempo": ts,
-        "Apertura (%)": satPC
+        "Flujo (L/m)": satPC
     })
 
     chart2 = alt.Chart(df_valve).mark_line(color="green").encode(
         x=alt.X("Tiempo:T", title="Tiempo"),
-        y=alt.Y("Apertura (%):Q", title="Apertura (%)", scale=alt.Scale(domain=[min(satPC), 100]))
+        y=alt.Y("Flujo (L/m):Q", title="Flujo (L/m)", scale=alt.Scale(domain=[0, 15]))
     ).properties(
-        title="Apertura",
+        title="Flujo",
         height=300
     )
 
@@ -373,60 +315,83 @@ def set_session():
     with col2:
         st.session_state.placeholder3 = st.empty()
 
-def run_controller():
-    pid = PIDController(st.session_state.kp, st.session_state.ki, st.session_state.kd, st.session_state.time_step)
+
+def get_fresh_data_with_retries(retries=3, delay=0.02):
+    for _ in range(retries):
+        current_saturation, current_timestamp, hr, ppg, count = get_sat()
+        if count != st.session_state.lastTS:
+            return current_saturation, current_timestamp, hr, ppg, count
+        time.sleep(delay)
+    return None 
+
+def update_state_with_valid_data(pid, current_saturation, current_timestamp, hr, ppg, count):
+    error = st.session_state.setpoint - current_saturation
+    valve_opening = pid.control(error, st.session_state.time_step)
+
+    pwm_value = int(180 + valve_opening * 75)
+    pwm_value = 0 if pwm_value == 180 else pwm_value
+    set_open(pwm_value)
+
+    flow = valve_opening * 15  # L/min
+
+    st.session_state.timestamps.append(current_timestamp)
+    st.session_state.saturation_values.append(current_saturation)
+    st.session_state.hr_values.append(hr)
+    st.session_state.ppg_values.append(ppg)
+    st.session_state.valve_opening_values.append(flow)
+    st.session_state.errors.append(error)
+    st.session_state.lastTS = count
+
+def update_state_with_nan():
+    current_time = time.time()
+    formatted_time = datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
+    st.session_state.timestamps.append(formatted_time)
+    st.session_state.saturation_values.append(np.nan)
+    st.session_state.hr_values.append(np.nan)
+    st.session_state.ppg_values.append(np.nan)
+    st.session_state.valve_opening_values.append(np.nan)
+    st.session_state.errors.append(np.nan)
+
+def update_status_display(LOST, MAX_LOST):
+    if LOST > MAX_LOST:
+        st.session_state.placeholder0.error("Data stream stopped, check device.")
+    else:
+        st.session_state.placeholder0.empty()
+
+
+
+def set_controller():
+    pid = PIDController(
+        st.session_state.kp,
+        st.session_state.ki,
+        st.session_state.kd,
+        st.session_state.time_step
+    )
+    return pid
+    
+
+def run_controller_loop(pid):
     start_time = time.time()
     MAX_LOST = 10
     LOST = 0
-    while time.time() - start_time <= st.session_state.simulation_time:
+    infinite = False if st.session_state.simulation_time > 0 else True
+    
+    while (time.time() - start_time <= st.session_state.simulation_time) or infinite:
         time.sleep(st.session_state.time_step)
 
-        # Retry logic for stale data
-        attempts = 3
-        for _ in range(attempts):
-            current_saturation, current_timestamp, hr, ppg, count = get_sat()
-            if count != st.session_state.lastTS:
-                break
-            time.sleep(0.005)
+        data = get_fresh_data_with_retries(retries=3, delay=0.02)
 
-        if count != st.session_state.lastTS:
-            error = st.session_state.setpoint - current_saturation
-            valve_opening = pid.control(error, st.session_state.time_step)
-            set_open(int(valve_opening * 255))
-
-            # Append real data
-            st.session_state.timestamps.append(current_timestamp)
-            st.session_state.saturation_values.append(current_saturation)
-            st.session_state.hr_values.append(hr)
-            st.session_state.ppg_values.append(ppg)
-            st.session_state.valve_opening_values.append(valve_opening)
-            st.session_state.errors.append(error)
-            st.session_state.lastTS = count
+        if data:
+            current_saturation, current_timestamp, hr, ppg, count = data
+            update_state_with_valid_data(pid, current_saturation, current_timestamp, hr, ppg, count)
             LOST = 0
         else:
-            # Append NaNs if data is stale
-            current_time = time.time()
-            formatted_time = datetime.fromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-
-            st.session_state.timestamps.append(formatted_time)
-            st.session_state.saturation_values.append(np.nan)
-            st.session_state.hr_values.append(np.nan)
-            st.session_state.ppg_values.append(np.nan)
-            st.session_state.valve_opening_values.append(np.nan)
-            st.session_state.errors.append(np.nan)
+            update_state_with_nan()
             LOST += 1
-
-        # Reference updated in both branches
         st.session_state.reference = [st.session_state.setpoint] * len(st.session_state.timestamps)
-
-        # Status handling
-        if LOST > MAX_LOST:
-            st.session_state.placeholder0.error("Data stream stopped, check device.")
-        else:
-            st.session_state.placeholder0.empty()
-
+        update_status_display(LOST, MAX_LOST)
         plot()
-
 
 def get_params():
     st.write("Parámetros de simulación")
@@ -468,7 +433,7 @@ def get_params():
     )
 
     st.session_state.plot = st.selectbox(
-        "Plot backend", ["altair", "plotly", "streamlit"],
+        "Plot backend", ["plotly", "altair", "streamlit"],
         disabled=st.session_state.disabled
     )
 
@@ -499,7 +464,8 @@ def main():
                 stop()
 
     if st.session_state.running:
-        run_controller()
+        pid = set_controller()
+        run_controller_loop(pid)
         stop()
     else:
         plot()
