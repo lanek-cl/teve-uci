@@ -93,61 +93,6 @@ def get_sat(max_retries=5, delay=0.1):
     # If all retries fail, return NaNs and empty timestamp
     return np.nan, "", np.nan, np.nan, np.nan
 
-
-def get_sat_old():
-    df = pl.read_csv("csv/raw_data.csv")
-    spo2 = df[-1, "SPO2"]
-    ts = df[-1, "TimeStamp"]
-    hr = df[-1, "HR"]
-    ppg = df[-1, "PPG"]
-    count = df[-1, "Count"]
-    return min(spo2, 100), ts, hr, ppg, count
-
-def get_sat_prob():
-    with open(RAW_DATA, "rb") as f:
-        f.seek(-2, 2)  # Move to second last byte
-        while f.read(1) != b'\n':
-            f.seek(-2, 1)
-        last_line = f.readline().decode().strip()
-
-    # Re-read the header to map column names
-    with open(RAW_DATA, "r", newline='') as f:
-        header = next(f).strip().split(",")
-
-    # Skip if last_line is empty or malformed
-    if not last_line or len(last_line.split(",")) != len(header):
-        raise ValueError("Last line is empty or malformed")
-
-    # Build a dictionary manually (avoiding DictReader on single line)
-    values = last_line.split(",")
-    row_dict = dict(zip(header, values))
-
-    spo2 = float(row_dict["SPO2"])
-    hr = float(row_dict["HR"])
-    ppg = float(row_dict["PPG"])
-    ts = row_dict["TimeStamp"]
-    count = float(row_dict["Count"])
-    return min(spo2, 100), ts, hr, ppg, count
-
-
-def get_sat_new():
-    with open("csv/raw_data.csv", "rb") as f:
-        try:
-            f.seek(-500, 2)  # Go to near the end of the file (500 bytes before EOF)
-        except OSError:
-            f.seek(0)  # File is smaller than 500 bytes
-        lines = f.readlines()
-        last_line = lines[-1].decode()
-    
-    # Now parse the line manually or with Polars
-    df = pl.read_csv(io.StringIO(last_line), has_header=False, new_columns=["TimeStamp", "SPO2", "HR", "PPG", "Count"])
-    spo2 = df[0, "SPO2"]
-    ts = df[0, "TimeStamp"]
-    hr = df[0, "HR"]
-    ppg = df[0, "PPG"]
-    count = df[0, "Count"]
-    return min(spo2, 100), ts, hr, ppg, count
-
 def export_data_to_csv():
     df = pd.DataFrame({
         "timestamp": st.session_state.timestamps,
@@ -173,24 +118,21 @@ def plot():
         plot_streamlit()
 
 def plot_plotly():
-    satPC = []
-    for i in st.session_state.valve_opening_values:
-        satPC.append(i*100)
-
+    satPC = st.session_state.valve_opening_values
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.reference, name="Referencia", line=dict(color="red", dash="dash")))
     fig1.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.saturation_values, name="Saturación", line=dict(color="blue")))
-    fig1.update_layout(title="Saturación de Oxígeno", xaxis_title="Tiempo (s)", yaxis_title="SpO₂ (%)")
+    fig1.update_layout(title="Saturación de Oxígeno", xaxis_title="Tiempo (s)", yaxis_title="SpO₂ (%)", height=400)
     st.session_state.placeholder1.plotly_chart(fig1, use_container_width=True)
 
     fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=st.session_state.timestamps, y=satPC, name="Apertura válvula", line=dict(color="green")))
-    fig2.update_layout(title="Apertura", xaxis_title="Tiempo (s)", yaxis_title="Apertura (%)")
+    fig2.add_trace(go.Scatter(x=st.session_state.timestamps, y=satPC, name="Flujo Aire", line=dict(color="green")))
+    fig2.update_layout(title="Flujo de Aire", xaxis_title="Tiempo (s)", yaxis_title="Flujo (L/m)", height=400)
     st.session_state.placeholder2.plotly_chart(fig2, use_container_width=True)
 
     fig3 = go.Figure()
     fig3.add_trace(go.Scatter(x=st.session_state.timestamps, y=st.session_state.errors, name="Error", line=dict(color="purple")))
-    fig3.update_layout(title="Error", xaxis_title="Tiempo (s)", yaxis_title="Error (%)")
+    fig3.update_layout(title="Error de Control", xaxis_title="Tiempo (s)", yaxis_title="Error (%)", height=400)
     st.session_state.placeholder3.plotly_chart(fig3, use_container_width=True)
 
 def plot_altair():
@@ -201,7 +143,7 @@ def plot_altair():
     satPC = [v for v in st.session_state.valve_opening_values]
 
     # === 1. Saturación & Referencia ===
-    ts = pd.to_datetime(st.session_state.timestamps)
+    ts = st.session_state.timestamps
 
     # 1. Saturación & Referencia (with dashed red line for Referencia)
     df_saturation = pd.DataFrame({
@@ -231,14 +173,14 @@ def plot_altair():
     # === 2. Apertura ===
     df_valve = pd.DataFrame({
         "Tiempo": ts,
-        "Apertura (%)": satPC
+        "Flujo (L/m)": satPC
     })
 
     chart2 = alt.Chart(df_valve).mark_line(color="green").encode(
         x=alt.X("Tiempo:T", title="Tiempo"),
-        y=alt.Y("Apertura (%):Q", title="Apertura (%)", scale=alt.Scale(domain=[0, 15]))
+        y=alt.Y("Flujo (L/m):Q", title="Flujo (L/m)", scale=alt.Scale(domain=[0, 15]))
     ).properties(
-        title="Apertura",
+        title="Flujo",
         height=300
     )
 
@@ -394,10 +336,9 @@ def run_controller():
             valve_opening = pid.control(error, st.session_state.time_step)
             pwm_value = int(180 + valve_opening * 75)
             flow = valve_opening * 15  # Convert to flow in L/min
-            if pwm_value ==180:
+            if pwm_value == 180:
                 pwm_value = 0
             set_open(pwm_value)
-            
 
             # Append real data
             st.session_state.timestamps.append(current_timestamp)
@@ -473,7 +414,7 @@ def get_params():
     )
 
     st.session_state.plot = st.selectbox(
-        "Plot backend", ["altair", "plotly", "streamlit"],
+        "Plot backend", ["plotly", "altair", "streamlit"],
         disabled=st.session_state.disabled
     )
 
