@@ -1,3 +1,4 @@
+import os
 import time
 import hid
 import csv
@@ -69,6 +70,7 @@ if __name__ == '__main__':
     VENDOR_ID = 0x28E9
     PRODUCT_ID = 0x028A
     csvPath = 'csv/'
+    os.makedirs(csvPath, exist_ok=True)
     csvFileName = csvPath + f'{name}.csv'
 
     try:
