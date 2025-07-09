@@ -83,7 +83,7 @@ def get_sat(max_retries=5, delay=0.1):
             spo2 = float(row_dict["SPO2"])
             hr = float(row_dict["HR"])
             ppg = float(row_dict["PPG"])
-            ts = row_dict["TimeStamp"]
+            ts = row_dict["DateTime"]
             count = float(row_dict["Count"])
             return min(spo2, 100), ts, hr, ppg, count
 
